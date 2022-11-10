@@ -16,7 +16,6 @@ func main() {
 			k, v := rand.Uint64(), rand.Float64()
 			m.Put(k, v)
 		}
-		m.Shrink()
 		fmt.Println(m.Cap())
 	} else {
 		m2 := map[uint64]float64{}

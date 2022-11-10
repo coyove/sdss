@@ -10,7 +10,7 @@ import (
 func TestMap(t *testing.T) {
 	rand.Seed(time.Now().Unix())
 
-	const N = 1e5
+	const N = 1e7
 	m := NewMap(0)
 	m2 := map[uint64]float64{}
 
@@ -53,6 +53,11 @@ func TestMap(t *testing.T) {
 		}
 	}
 	fmt.Println(m.Len(), len(m2))
+}
+
+func TestLoad(t *testing.T) {
+	m := &Map{}
+	fmt.Println(m.Load("dump.map"))
 }
 
 func BenchmarkMap(b *testing.B) {
