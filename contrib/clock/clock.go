@@ -81,7 +81,10 @@ func Id() (id uint64) {
 }
 
 func IdStr() string {
-	id := Id()
+	return base40Encode(Id())
+}
+
+func base40Encode(id uint64) string {
 	buf := make([]byte, 12)
 	for i := range buf {
 		m := id % 40
@@ -89,6 +92,10 @@ func IdStr() string {
 		buf[len(buf)-i-1] = encodeTable[m]
 	}
 	return *(*string)(unsafe.Pointer(&buf))
+}
+
+func UnixMilliToIdStr(m int64) string {
+	return base40Encode(uint64(m-tsOffset) << 21)
 }
 
 func ParseUnixMilli(id uint64) int64 {

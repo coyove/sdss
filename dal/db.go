@@ -1,6 +1,7 @@
 package dal
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -8,6 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/coyove/sdss/contrib/clock"
+	"github.com/coyove/sdss/contrib/ngram"
 	"github.com/sirupsen/logrus"
 	//sync "github.com/sasha-s/go-deadlock"
 )
@@ -40,7 +43,7 @@ func InitDB(region, accessKey, secretKey string) {
 	logrus.Info("dynamodb endpoint: ", info.Endpoints)
 }
 
-func IndexContent(nss []string, id string, tokens map[string]float64) error {
+func IndexContent(nss []string, id, content string) error {
 	// if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
 	// 	TableName: &tableFTS,
 	// 	Key: map[string]*dynamodb.AttributeValue{
@@ -58,11 +61,25 @@ func IndexContent(nss []string, id string, tokens map[string]float64) error {
 	// 	return fmt.Errorf("fts: failed to insert document: %v", err)
 	// }
 
+	tokens := ngram.Split(content)
+	addDoc(id, content)
 	for _, ns := range nss {
 		for token, _ := range tokens {
-			AddBitmap(ns+":"+token, id)
+			addBitmap(ns, token, id)
 		}
 	}
-
 	return nil
+}
+
+func SearchContent(ns string, query string) {
+	var includes []string
+	for k := range ngram.Split(query) {
+		includes = append(includes, k)
+	}
+	mergeBitmaps(ns, includes, nil, clock.UnixMilli(), func(ts int64) error {
+		for _, id := range scanDoc(ts) {
+			fmt.Println(id, getDoc(id))
+		}
+		return nil
+	})
 }
