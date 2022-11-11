@@ -23,12 +23,13 @@ var (
 
 	randMu     sync.Mutex
 	randSeeded bool
-	serverId   = uint32(Rand() * serverIdMask)
+	serverId   = uint64(Rand()*(serverIdMask-maxCounter)) & (serverIdMask - maxCounter)
 )
 
 const (
-	serverIdMask = 0x7fffffff
-	tsOffset     = 1666666666
+	serverIdMask = 0x1fffff
+	maxCounter   = 0x1ff
+	tsOffset     = 1666666666666
 	encodeTable  = "-.0123456789_abcdefghijklmnopqrstuvwxyz~"
 	// (2^64 - 40^12) / 2^64 = 0.1
 	// Count time up to year 2220.
@@ -39,8 +40,16 @@ func init() {
 	startupWallNano = time.Now().UnixNano()
 }
 
+func ServerId() int {
+	return int(serverId >> 9)
+}
+
 func UnixNano() int64 {
 	return runtimeNano() - startupNano + startupWallNano
+}
+
+func UnixMilli() int64 {
+	return UnixNano() / 1e6
 }
 
 func Unix() int64 {
@@ -55,7 +64,7 @@ func Id() (id uint64) {
 	idMutex.Lock()
 	defer idMutex.Unlock()
 
-	sec := Unix() - tsOffset
+	sec := UnixMilli() - tsOffset
 	if sec < idLastSec {
 		panic("bad clock skew")
 	}
@@ -64,10 +73,10 @@ func Id() (id uint64) {
 	}
 	idLastSec = sec
 	idCounter++
-	if idCounter >= 0xffff {
-		panic("too many calls in one second")
+	if idCounter >= maxCounter {
+		panic("too many IDs generated in 1ms")
 	}
-	id = uint64(sec)<<31 | (uint64(serverId+idCounter) & uint64(serverIdMask))
+	id = uint64(sec)<<21 | serverId | uint64(idCounter)
 	return
 }
 
@@ -82,11 +91,11 @@ func IdStr() string {
 	return *(*string)(unsafe.Pointer(&buf))
 }
 
-func ParseTime(id uint64) int64 {
-	return int64(id>>31) + tsOffset
+func ParseUnixMilli(id uint64) int64 {
+	return int64(id>>21) + tsOffset
 }
 
-func ParseTimeStr(idstr string) (int64, bool) {
+func ParseStrUnixMilli(idstr string) (int64, bool) {
 	if len(idstr) != 12 {
 		return 0, false
 	}
@@ -99,7 +108,7 @@ func ParseTimeStr(idstr string) (int64, bool) {
 		}
 		id = (id + uint64(idx)) * 40
 	}
-	return ParseTime(id / 40), true
+	return ParseUnixMilli(id / 40), true
 }
 
 func Rand() float64 {

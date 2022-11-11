@@ -9,28 +9,6 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-func walk(text string, f func(byte, string)) {
-	text = strings.TrimSpace(text)
-	for len(text) > 0 {
-		idx := strings.IndexByte(text, ' ')
-		var q string
-		if idx == -1 {
-			q, text = text, ""
-		} else {
-			q, text = text[:idx], text[idx+1:]
-		}
-		if len(q) == 0 {
-			continue
-		}
-		switch q[0] {
-		case '-', '+', '?':
-			f(q[0], q[1:])
-		default:
-			f('?', q)
-		}
-	}
-}
-
 func Split(text string) (res map[string]float64) {
 	res = map[string]float64{}
 
