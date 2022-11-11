@@ -3,6 +3,7 @@ package dal
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -64,7 +65,7 @@ func IndexContent(nss []string, id, content string) error {
 	tokens := ngram.Split(content)
 	addDoc(id, content)
 	for _, ns := range nss {
-		for token, _ := range tokens {
+		for token := range tokens {
 			addBitmap(ns, token, id)
 		}
 	}
@@ -76,10 +77,28 @@ func SearchContent(ns string, query string) {
 	for k := range ngram.Split(query) {
 		includes = append(includes, k)
 	}
+
+	var res []string
 	mergeBitmaps(ns, includes, nil, clock.UnixMilli(), func(ts int64) error {
 		for _, id := range scanDoc(ts) {
-			fmt.Println(id, getDoc(id))
+			content := getDoc(id)
+			score := 0.0
+			for _, name := range includes {
+				if strings.Contains(content, name) {
+					score++
+				}
+			}
+			if score >= float64(len(includes))/2 {
+				res = append(res, content)
+			}
+		}
+		if len(res) >= 20 {
+			return errMergeAborted
 		}
 		return nil
 	})
+
+	for _, res := range res {
+		fmt.Println(res)
+	}
 }

@@ -2,7 +2,6 @@ package dal
 
 import (
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/RoaringBitmap/roaring"
@@ -12,6 +11,8 @@ import (
 const (
 	bitmapTimeSpan = 86400 * 1000 // 1 day in milliseconds
 )
+
+var errMergeAborted = fmt.Errorf("merge aborted")
 
 type bitmap struct {
 	m     *roaring.Bitmap
@@ -25,7 +26,7 @@ var bm struct {
 }
 
 func init() {
-	os.MkdirAll("ngram_test", 0777)
+	// os.MkdirAll("token_test", 0777)
 }
 
 func addBitmap(ns, name, id string) error {
@@ -73,21 +74,28 @@ func mergeBitmaps(ns string, includes, excludes []string, start int64, f func(ts
 	start = start / bitmapTimeSpan * bitmapTimeSpan
 
 	var final *roaring.Bitmap
+	var fmu sync.Mutex
+	var wg sync.WaitGroup
 	for _, name := range includes {
-		visitBitmap(genBitmapBlockName(ns, name, start), func(b *bitmap) {
+		wg.Add(1)
+		go visitBitmap(genBitmapBlockName(ns, name, start), func(b *bitmap) {
+			defer wg.Done()
 			if b == nil {
 				return
 			}
+			fmu.Lock()
 			if final == nil {
 				final = b.m.Clone()
 			} else {
 				final.Or(b.m)
 			}
+			fmu.Unlock()
 		})
 	}
+	wg.Wait()
 
 	if final == nil {
-		return mergeBitmaps(ns, includes, excludes, start-bitmapTimeSpan, f)
+		return nil
 	}
 
 	for _, name := range excludes {
@@ -104,7 +112,14 @@ func mergeBitmaps(ns string, includes, excludes []string, start int64, f func(ts
 		err = f(int64(x) + start)
 		return err == nil
 	})
-	return err
+	if err != nil {
+		if err == errMergeAborted {
+			return nil
+		}
+		return err
+	}
+
+	return mergeBitmaps(ns, includes, excludes, start-bitmapTimeSpan, f)
 }
 
 func genBitmapBlockName(ns, name string, unixMilli int64) string {
