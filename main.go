@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 
@@ -33,9 +34,21 @@ func main() {
 			continue
 		}
 		dal.IndexContent([]string{"a"}, clock.IdStr(), line)
-		if ln > 3000 {
+		if ln%10000 == 0 {
+			fmt.Println("index", ln)
+		}
+		if ln > 100000 {
 			break
 		}
 	}
-	dal.SearchContent("a", "学校食堂")
+
+	c := &dal.SearchCursor{
+		Query:        "昆仑",
+		Start:        clock.IdStr(),
+		EndUnixMilli: clock.UnixMilli() - 500,
+		Count:        5,
+	}
+	for !c.Exhausted {
+		dal.SearchContent("a", c)
+	}
 }

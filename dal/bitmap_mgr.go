@@ -9,10 +9,9 @@ import (
 )
 
 const (
-	bitmapTimeSpan = 86400 * 1000 // 1 day in milliseconds
+	bitmapTimeSpan       = 1000 // 1 day in milliseconds
+	bitmapMergeBatchSize = 16
 )
-
-var errMergeAborted = fmt.Errorf("merge aborted")
 
 type bitmap struct {
 	m     *roaring.Bitmap
@@ -70,8 +69,13 @@ func visitBitmap(key string, f func(*bitmap)) {
 	f(bm.m[key])
 }
 
-func mergeBitmaps(ns string, includes, excludes []string, start int64, f func(ts int64) error) error {
+func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f func([]int64) bool) error {
+	rawStart := start
 	start = start / bitmapTimeSpan * bitmapTimeSpan
+	end = end / bitmapTimeSpan * bitmapTimeSpan
+	if start < end {
+		return nil
+	}
 
 	var final *roaring.Bitmap
 	var fmu sync.Mutex
@@ -95,7 +99,7 @@ func mergeBitmaps(ns string, includes, excludes []string, start int64, f func(ts
 	wg.Wait()
 
 	if final == nil {
-		return nil
+		return mergeBitmaps(ns, includes, excludes, start-bitmapTimeSpan, end, f)
 	}
 
 	for _, name := range excludes {
@@ -107,21 +111,55 @@ func mergeBitmaps(ns string, includes, excludes []string, start int64, f func(ts
 		})
 	}
 
-	var err error
-	final.Iterate(func(x uint32) bool {
-		err = f(int64(x) + start)
-		return err == nil
-	})
-	if err != nil {
-		if err == errMergeAborted {
-			return nil
+	var pendings []int64
+	iter := final.ReverseIterator()
+	for iter.HasNext() {
+		ts := int64(iter.Next()) + start
+		if ts > rawStart {
+			continue
 		}
-		return err
+		pendings = append(pendings, ts)
+		if len(pendings) >= bitmapMergeBatchSize {
+			if !f(pendings) {
+				return nil
+			}
+			pendings = pendings[:0]
+		}
 	}
-
-	return mergeBitmaps(ns, includes, excludes, start-bitmapTimeSpan, f)
+	if !f(pendings) {
+		return nil
+	}
+	return mergeBitmaps(ns, includes, excludes, start-bitmapTimeSpan, end, f)
 }
 
 func genBitmapBlockName(ns, name string, unixMilli int64) string {
 	return fmt.Sprintf("%s:%s:%016x:%04x", ns, name, unixMilli, clock.ServerId())
+}
+
+type int64Heap struct {
+	data []int64
+}
+
+func (h *int64Heap) Len() int {
+	return len(h.data)
+}
+
+func (h *int64Heap) Less(i, j int) bool {
+	return h.data[i] < h.data[j]
+}
+
+func (h *int64Heap) Swap(i, j int) {
+	h.data[i], h.data[j] = h.data[j], h.data[i]
+}
+
+func (h *int64Heap) Push(x interface{}) {
+	h.data = append(h.data, x.(int64))
+}
+
+func (h *int64Heap) Pop() interface{} {
+	old := h.data
+	n := len(old)
+	x := old[n-1]
+	h.data = old[:n-1]
+	return x
 }

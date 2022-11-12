@@ -72,33 +72,73 @@ func IndexContent(nss []string, id, content string) error {
 	return nil
 }
 
-func SearchContent(ns string, query string) {
+func SearchContent(ns string, cursor *SearchCursor) (res []*Document, err error) {
 	var includes []string
-	for k := range ngram.Split(query) {
+	for k := range ngram.Split(cursor.Query) {
 		includes = append(includes, k)
 	}
 
-	var res []string
-	mergeBitmaps(ns, includes, nil, clock.UnixMilli(), func(ts int64) error {
-		for _, id := range scanDoc(ts) {
-			content := getDoc(id)
-			score := 0.0
-			for _, name := range includes {
-				if strings.Contains(content, name) {
-					score++
+	start, ok := clock.ParseStrUnixMilli(cursor.Start)
+	if !ok {
+		return nil, fmt.Errorf("invalid cursor start: %q", cursor.Start)
+	}
+
+	cursor.Exhausted = true
+	mergeBitmaps(ns, includes, nil, start, cursor.EndUnixMilli, func(tss []int64) bool {
+		for _, ts := range tss {
+			for _, id := range scanDoc(ts) {
+				if id > cursor.Start {
+					continue
+				}
+				content := getDoc(id)
+				score := 0.0
+				for _, name := range includes {
+					if strings.Contains(content, name) {
+						score++
+					}
+				}
+				if score >= float64(len(includes))/2 {
+					res = append(res, &Document{
+						Id:      id,
+						Content: content,
+					})
 				}
 			}
-			if score >= float64(len(includes))/2 {
-				res = append(res, content)
+			if len(res) > cursor.Count {
+				last := res[len(res)-1]
+				res = res[:len(res)-1]
+				cursor.Start = last.Id
+				cursor.Exhausted = false
+				return false
 			}
 		}
-		if len(res) >= 20 {
-			return errMergeAborted
-		}
-		return nil
+		return true
 	})
 
-	for _, res := range res {
-		fmt.Println(res)
+	for i, res := range res {
+		fmt.Printf("%02d %s\n", i, res)
 	}
+	return
+}
+
+type SearchCursor struct {
+	Query        string
+	Start        string
+	EndUnixMilli int64
+	Count        int
+	Exhausted    bool
+}
+
+type Document struct {
+	Id      string
+	Content string
+}
+
+func (doc *Document) CreateTimeMilli() int64 {
+	ts, _ := clock.ParseStrUnixMilli(doc.Id)
+	return ts
+}
+
+func (doc *Document) String() string {
+	return fmt.Sprintf("%d(%s): %q", doc.CreateTimeMilli(), doc.Id, doc.Content)
 }
