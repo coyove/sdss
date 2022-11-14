@@ -2,8 +2,6 @@ package dal
 
 import (
 	"fmt"
-	"math/bits"
-	"strconv"
 	"sync"
 
 	"github.com/RoaringBitmap/roaring"
@@ -24,7 +22,7 @@ type bitmap struct {
 	key string
 }
 
-var zzz = map[string][]byte{}
+var zzz sync.Map
 
 var bm struct {
 	m      *lru.Cache
@@ -36,6 +34,7 @@ func init() {
 	bm.m = lru.NewCache(1000)
 }
 
+// hash(ns + name) into 12 bits, 15 + 17
 func addBitmap(ns, name, id string) error {
 	idUnix, ok := clock.ParseStrUnix(id)
 	if !ok {
@@ -69,7 +68,7 @@ func addBitmap(ns, name, id string) error {
 	m, _ := cached.(*bitmap)
 	diff := idUnix - normalizedUnix
 	m.Lock()
-	m.CheckedAdd(uint32(diff))
+	m.CheckedAdd((strhash(name)&0xffff)<<16 | uint32(diff))
 	m.Unlock()
 
 	return dalPutBitmap(partKey, unixStr, m)
@@ -115,6 +114,7 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 	var final *roaring.Bitmap
 	var fmu sync.Mutex
 	var wg sync.WaitGroup
+	var dict = roaring.New()
 	for _, name := range includes {
 		wg.Add(1)
 		go accessBitmapReadonly(genBitmapPartKey(ns, name), start, func(b *bitmap) {
@@ -130,6 +130,7 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 			}
 			fmu.Unlock()
 		})
+		dict.Add(strhash(name) & 0xffff)
 	}
 	wg.Wait()
 
@@ -148,7 +149,11 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 
 	iter := final.ReverseIterator()
 	for iter.HasNext() {
-		ts := int64(iter.Next()) + start
+		tmp := iter.Next()
+		if !dict.Contains(tmp >> 16) {
+			continue
+		}
+		ts := int64(tmp&0xffff) + start
 		if ts > rawStart {
 			continue
 		}
@@ -160,57 +165,45 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 }
 
 func genBitmapPartKey(ns, name string) string {
-	if len(ns) > 255 || len(name) > 255 {
-		panic("namespace or name overflows")
-	}
-	head := uint16(len(ns))<<8 | uint16(len(name))
-	return fmt.Sprintf("%04x%s%s", bits.Reverse16(head), ns, name)
-}
-
-func parseBitmapPartKey(s string) (ns, name string, ok bool) {
-	if len(s) < 4 {
-		return
-	}
-	tmp, err := strconv.ParseUint(s[:4], 16, 64)
-	if err != nil {
-		return
-	}
-	s = s[4:]
-	x := bits.Reverse16(uint16(tmp))
-	nsLen, nameLen := int(x>>8), int(byte(x))
-
-	if len(s) < nsLen+nameLen {
-		return
-	}
-	ns, name, ok = s[:nsLen], s[nsLen:nsLen+nameLen], true
-	return
+	return ns + hash12(name)
 }
 
 func dalGetBitmap(nsid, unix string) (*bitmap, error) {
-	// v := zzz[key]
-	resp, err := db.GetItem(&dynamodb.GetItemInput{
-		TableName: &tableFTS,
-		Key: map[string]*dynamodb.AttributeValue{
-			"nsid": {S: aws.String(nsid)},
-			"ts":   {S: aws.String(unix)},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dal get bitmap: store error: %v", err)
-	}
-
-	v := resp.Item["content"]
-	if v == nil || len(v.B) == 0 {
+	v, ok := zzz.Load(nsid + unix)
+	if !ok {
 		return nil, nil
 	}
 	m := roaring.New()
-	if err := m.UnmarshalBinary(v.B); err != nil {
+	if err := m.UnmarshalBinary(v.([]byte)); err != nil {
 		return nil, err
 	}
 	return &bitmap{
 		Bitmap: m,
 		key:    nsid,
 	}, nil
+	// resp, err := db.GetItem(&dynamodb.GetItemInput{
+	// 	TableName: &tableFTS,
+	// 	Key: map[string]*dynamodb.AttributeValue{
+	// 		"nsid": {S: aws.String(nsid)},
+	// 		"ts":   {S: aws.String(unix)},
+	// 	},
+	// })
+	// if err != nil {
+	// 	return nil, fmt.Errorf("dal get bitmap: store error: %v", err)
+	// }
+
+	// v := resp.Item["content"]
+	// if v == nil || len(v.B) == 0 {
+	// 	return nil, nil
+	// }
+	// m := roaring.New()
+	// if err := m.UnmarshalBinary(v.B); err != nil {
+	// 	return nil, err
+	// }
+	// return &bitmap{
+	// 	Bitmap: m,
+	// 	key:    nsid,
+	// }, nil
 }
 
 func dalPutBitmap(nsid string, unix string, b *bitmap) error {
@@ -220,7 +213,8 @@ func dalPutBitmap(nsid string, unix string, b *bitmap) error {
 	if err != nil {
 		return err
 	}
-	// zzz[key] = buf
+	zzz.Store(nsid+unix, buf)
+	return nil
 
 	if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
 		TableName: &tableFTS,
@@ -240,3 +234,16 @@ func dalPutBitmap(nsid string, unix string, b *bitmap) error {
 	}
 	return nil
 }
+
+func strhash(s string) uint32 {
+	const offset32 = 2166136261
+	const prime32 = 16777619
+	var hash uint32 = offset32
+	for i := range s {
+		hash *= prime32
+		hash ^= uint32(s[i])
+	}
+	return hash
+}
+
+func hash12(s string) string { return fmt.Sprintf("%03x", strhash(s)&0xfff) }

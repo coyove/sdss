@@ -23,6 +23,16 @@ var (
 	tableFTS      = "fts"
 )
 
+func init() {
+	for i := 0; i < 10; i++ {
+		go func() {
+			for dt := range addBitmapChan {
+				dt.OutError <- addBitmap(dt.Namespace, dt.Token, dt.Id)
+			}
+		}()
+	}
+}
+
 func InitDB() {
 	ddb := types.Config.DynamoDB
 	sess, err := session.NewSession(&aws.Config{
@@ -46,15 +56,6 @@ func InitDB() {
 	}
 	for _, ep := range info.Endpoints {
 		logrus.Info("dynamodb endpoint: ", strings.Replace(ep.String(), "\n", " ", -1))
-	}
-
-	for i := 0; i < 10; i++ {
-		go func() {
-			for dt := range addBitmapChan {
-				dt.OutError <- addBitmap(dt.Namespace, dt.Token, dt.Id)
-				fmt.Println(dt.Token)
-			}
-		}()
 	}
 }
 
@@ -130,7 +131,6 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 		fmt.Printf("%02d %s\n", i, res)
 	}
 	// bm.m.Info(func(k lru.Key, v interface{}, x, y int64) {
-	fmt.Println(len(zzz))
 	fmt.Println(bm.m.Len())
 	// })
 	return

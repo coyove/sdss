@@ -4,18 +4,19 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/dal"
-	"github.com/coyove/sdss/types"
 )
 
 func main() {
-	types.LoadConfig("config.json")
-	dal.InitDB()
+	runtime.GOMAXPROCS(2)
+	// types.LoadConfig("config.json")
+	// dal.InitDB()
 
-	if false {
+	if true {
 		f, err := os.Open(os.Getenv("HOME") + "/Downloads/a.txt")
 		if err != nil {
 			panic(err)
@@ -31,8 +32,8 @@ func main() {
 			if len(line) == 0 {
 				continue
 			}
-			fmt.Println(ln, dal.IndexContent([]string{"a"}, clock.IdStr(), line))
-			if ln%1 == 0 {
+			dal.IndexContent([]string{"a"}, clock.IdStr(), line)
+			if ln%1000 == 0 {
 				fmt.Println("index", ln)
 			}
 			if ln > 10000 {
@@ -42,7 +43,7 @@ func main() {
 	}
 
 	c := &dal.SearchCursor{
-		Query:   "我对上帝",
+		Query:   "华夏",
 		Start:   clock.IdStr(),
 		EndUnix: clock.Unix() - 60,
 		Count:   5,
