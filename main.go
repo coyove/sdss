@@ -34,19 +34,19 @@ func main() {
 			continue
 		}
 		dal.IndexContent([]string{"a"}, clock.IdStr(), line)
-		if ln%10000 == 0 {
+		if ln%1000 == 0 {
 			fmt.Println("index", ln)
 		}
-		if ln > 100000 {
+		if ln > 10000 {
 			break
 		}
 	}
 
 	c := &dal.SearchCursor{
-		Query:        "昆仑",
-		Start:        clock.IdStr(),
-		EndUnixMilli: clock.UnixMilli() - 500,
-		Count:        5,
+		Query:   "昆仑",
+		Start:   clock.IdStr(),
+		EndUnix: clock.Unix() - 60,
+		Count:   5,
 	}
 	for !c.Exhausted {
 		dal.SearchContent("a", c)

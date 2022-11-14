@@ -2,6 +2,8 @@ package dal
 
 import (
 	"fmt"
+	"math/bits"
+	"strconv"
 	"sync"
 
 	"github.com/RoaringBitmap/roaring"
@@ -9,14 +11,13 @@ import (
 )
 
 const (
-	bitmapTimeSpan       = 1000 // 1 day in milliseconds
-	bitmapMergeBatchSize = 16
+	bitmapTimeSpan = 10 // 86400 * 10 // 10 days
 )
 
 type bitmap struct {
-	m     *roaring.Bitmap
-	dirty bool
-	ts    int64 // rounded to bitmapTimeSpan
+	*roaring.Bitmap
+	ts   int64 // rounded to bitmapTimeSpan
+	name string
 }
 
 var bm struct {
@@ -29,37 +30,42 @@ func init() {
 }
 
 func addBitmap(ns, name, id string) error {
-	idUnix, ok := clock.ParseStrUnixMilli(id)
+	idUnix, ok := clock.ParseStrUnix(id)
 	if !ok {
 		return fmt.Errorf("bitmap add %q: invalid timestamp format", id)
 	}
 	normalizedUnix := idUnix / bitmapTimeSpan * bitmapTimeSpan
-	name = genBitmapBlockName(ns, name, normalizedUnix)
+	name = genBitmapBlockName(ns, name, normalizedUnix, "")
 
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
 	if bm.m == nil {
 		bm.m = map[string]*bitmap{}
 	}
-
 	m, ok := bm.m[name]
 	if !ok {
 		m = &bitmap{
-			m:  roaring.NewBitmap(),
-			ts: normalizedUnix,
+			Bitmap: roaring.NewBitmap(),
+			ts:     normalizedUnix,
+			name:   name,
 		}
 		bm.m[name] = m
+	} else {
+		m2 := *m
+		m2.Bitmap = m.Clone()
+		m = &m2
 	}
+	bm.mu.Unlock()
 
 	if idUnix < m.ts || idUnix >= m.ts+bitmapTimeSpan {
 		return fmt.Errorf("bitmap add %q: fatal clock (currently %d), got ID at %d", id, m.ts, idUnix)
 	}
 
 	diff := idUnix - m.ts
-	if m.m.CheckedAdd(uint32(diff)) {
-		m.dirty = true
-	}
+	m.CheckedAdd(uint32(diff))
+
+	bm.mu.Lock()
+	bm.m[name] = m
+	bm.mu.Unlock()
 	return nil
 }
 
@@ -69,7 +75,7 @@ func visitBitmap(key string, f func(*bitmap)) {
 	f(bm.m[key])
 }
 
-func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f func([]int64) bool) error {
+func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f func(int64) bool) error {
 	rawStart := start
 	start = start / bitmapTimeSpan * bitmapTimeSpan
 	end = end / bitmapTimeSpan * bitmapTimeSpan
@@ -82,16 +88,16 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 	var wg sync.WaitGroup
 	for _, name := range includes {
 		wg.Add(1)
-		go visitBitmap(genBitmapBlockName(ns, name, start), func(b *bitmap) {
+		go visitBitmap(genBitmapBlockName(ns, name, start, ""), func(b *bitmap) {
 			defer wg.Done()
 			if b == nil {
 				return
 			}
 			fmu.Lock()
 			if final == nil {
-				final = b.m.Clone()
+				final = b.Clone()
 			} else {
-				final.Or(b.m)
+				final.Or(b.Bitmap)
 			}
 			fmu.Unlock()
 		})
@@ -103,63 +109,71 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 	}
 
 	for _, name := range excludes {
-		visitBitmap(genBitmapBlockName(ns, name, start), func(b *bitmap) {
+		visitBitmap(genBitmapBlockName(ns, name, start, ""), func(b *bitmap) {
 			if b == nil {
 				return
 			}
-			final.AndNot(b.m)
+			final.AndNot(b.Bitmap)
 		})
 	}
 
-	var pendings []int64
 	iter := final.ReverseIterator()
 	for iter.HasNext() {
 		ts := int64(iter.Next()) + start
 		if ts > rawStart {
 			continue
 		}
-		pendings = append(pendings, ts)
-		if len(pendings) >= bitmapMergeBatchSize {
-			if !f(pendings) {
-				return nil
-			}
-			pendings = pendings[:0]
+		if !f(ts) {
+			return nil
 		}
-	}
-	if !f(pendings) {
-		return nil
 	}
 	return mergeBitmaps(ns, includes, excludes, start-bitmapTimeSpan, end, f)
 }
 
-func genBitmapBlockName(ns, name string, unixMilli int64) string {
-	return fmt.Sprintf("%s:%s:%016x:%04x", ns, name, unixMilli, clock.ServerId())
+func genBitmapBlockName(ns, name string, unix int64, serverId string) string {
+	if len(ns) > 255 || len(name) > 255 {
+		panic("namespace or name overflows")
+	}
+	head := uint16(len(ns))<<8 | uint16(len(name))
+	return fmt.Sprintf("%04x%s%s%016x%s", bits.Reverse16(head), ns, name, unix, serverId)
 }
 
-type int64Heap struct {
-	data []int64
+func parseBitmapBlockName(s string) (ns, name string, unix int64, serverId string, ok bool) {
+	if len(s) < 4 {
+		return
+	}
+	tmp, err := strconv.ParseUint(s[:4], 16, 64)
+	if err != nil {
+		return
+	}
+	s = s[4:]
+	x := bits.Reverse16(uint16(tmp))
+	nsLen, nameLen := int(x>>8), int(byte(x))
+
+	if len(s) < nsLen+nameLen {
+		return
+	}
+	ns, name = s[:nsLen], s[nsLen:nsLen+nameLen]
+	s = s[nsLen+nameLen:]
+
+	if len(s) == 16 { // no server_id suffix
+		unix, err = strconv.ParseInt(s, 16, 64)
+		if err != nil {
+			return
+		}
+	} else if len(s) > 16 {
+		unix, err = strconv.ParseInt(s[:16], 16, 64)
+		if err != nil {
+			return
+		}
+		serverId = s[16:]
+	} else {
+		return
+	}
+	ok = true
+	return
 }
 
-func (h *int64Heap) Len() int {
-	return len(h.data)
-}
-
-func (h *int64Heap) Less(i, j int) bool {
-	return h.data[i] < h.data[j]
-}
-
-func (h *int64Heap) Swap(i, j int) {
-	h.data[i], h.data[j] = h.data[j], h.data[i]
-}
-
-func (h *int64Heap) Push(x interface{}) {
-	h.data = append(h.data, x.(int64))
-}
-
-func (h *int64Heap) Pop() interface{} {
-	old := h.data
-	n := len(old)
-	x := old[n-1]
-	h.data = old[:n-1]
-	return x
+func implGetBitmap(key string) (*bitmap, error) {
+	return nil, nil
 }

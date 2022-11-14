@@ -72,45 +72,43 @@ func IndexContent(nss []string, id, content string) error {
 	return nil
 }
 
-func SearchContent(ns string, cursor *SearchCursor) (res []*Document, err error) {
+func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err error) {
 	var includes []string
 	for k := range ngram.Split(cursor.Query) {
 		includes = append(includes, k)
 	}
 
-	start, ok := clock.ParseStrUnixMilli(cursor.Start)
+	start, ok := clock.ParseStrUnix(cursor.Start)
 	if !ok {
 		return nil, fmt.Errorf("invalid cursor start: %q", cursor.Start)
 	}
 
 	cursor.Exhausted = true
-	mergeBitmaps(ns, includes, nil, start, cursor.EndUnixMilli, func(tss []int64) bool {
-		for _, ts := range tss {
-			for _, id := range scanDoc(ts) {
-				if id > cursor.Start {
-					continue
-				}
-				content := getDoc(id)
-				score := 0.0
-				for _, name := range includes {
-					if strings.Contains(content, name) {
-						score++
-					}
-				}
-				if score >= float64(len(includes))/2 {
-					res = append(res, &Document{
-						Id:      id,
-						Content: content,
-					})
+	mergeBitmaps(ns, includes, nil, start, cursor.EndUnix, func(ts int64) bool {
+		for _, id := range scanDoc(ts) {
+			if id > cursor.Start {
+				continue
+			}
+			content := getDoc(id)
+			score := 0.0
+			for _, name := range includes {
+				if strings.Contains(content, name) {
+					score++
 				}
 			}
-			if len(res) > cursor.Count {
-				last := res[len(res)-1]
-				res = res[:len(res)-1]
-				cursor.Start = last.Id
-				cursor.Exhausted = false
-				return false
+			if score >= float64(len(includes))/2 {
+				res = append(res, &SearchDocument{
+					Id:      id,
+					Content: content,
+				})
 			}
+		}
+		if len(res) > cursor.Count {
+			last := res[len(res)-1]
+			res = res[:len(res)-1]
+			cursor.Start = last.Id
+			cursor.Exhausted = false
+			return false
 		}
 		return true
 	})
@@ -118,27 +116,31 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*Document, err error)
 	for i, res := range res {
 		fmt.Printf("%02d %s\n", i, res)
 	}
+	for k := range bm.m {
+		fmt.Println(k)
+		break
+	}
 	return
 }
 
 type SearchCursor struct {
-	Query        string
-	Start        string
-	EndUnixMilli int64
-	Count        int
-	Exhausted    bool
+	Query     string
+	Start     string
+	EndUnix   int64
+	Count     int
+	Exhausted bool
 }
 
-type Document struct {
+type SearchDocument struct {
 	Id      string
 	Content string
 }
 
-func (doc *Document) CreateTimeMilli() int64 {
-	ts, _ := clock.ParseStrUnixMilli(doc.Id)
+func (doc *SearchDocument) CreateTimeMilli() int64 {
+	ts, _ := clock.ParseStrUnix(doc.Id)
 	return ts
 }
 
-func (doc *Document) String() string {
+func (doc *SearchDocument) String() string {
 	return fmt.Sprintf("%d(%s): %q", doc.CreateTimeMilli(), doc.Id, doc.Content)
 }

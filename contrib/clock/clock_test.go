@@ -6,19 +6,19 @@ import (
 )
 
 func TestClockId(t *testing.T) {
-	fmt.Println(UnixMilli())
+	fmt.Println(Unix())
 	for i := 0; i < 10; i++ {
-		fmt.Println(Id(), ParseUnixMilli(Id()), IdStr())
+		fmt.Println(Id(), ParseUnix(Id()), IdStr())
 	}
 	s := IdStr()
 	fmt.Println(s)
-	fmt.Println(ParseStrUnixMilli(s))
+	fmt.Println(ParseStrUnix(s))
 }
 
 func BenchmarkParseId(b *testing.B) {
 	id := IdStr()
 	for i := 0; i < b.N; i++ {
-		_, ok := ParseStrUnixMilli(id)
+		_, ok := ParseStrUnix(id)
 		if !ok {
 			b.FailNow()
 		}
