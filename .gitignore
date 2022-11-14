@@ -1,2 +1,4 @@
 *.map
 token_test
+config.json
+build.sh

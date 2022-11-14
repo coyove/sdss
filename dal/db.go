@@ -12,19 +12,22 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/contrib/ngram"
+	"github.com/coyove/sdss/types"
 	"github.com/sirupsen/logrus"
 	//sync "github.com/sasha-s/go-deadlock"
 )
 
 var (
-	db       *dynamodb.DynamoDB
-	tableFTS = "fts"
+	db            *dynamodb.DynamoDB
+	addBitmapChan = make(chan *types.DocumentToken, 1024)
+	tableFTS      = "fts"
 )
 
-func InitDB(region, accessKey, secretKey string) {
+func InitDB() {
+	ddb := types.Config.DynamoDB
 	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String(region),
-		Credentials: credentials.NewStaticCredentials(accessKey, secretKey, ""),
+		Region:      aws.String(ddb.Region),
+		Credentials: credentials.NewStaticCredentials(ddb.AccessKey, ddb.SecretKey, ""),
 		HTTPClient: &http.Client{
 			Timeout: time.Second,
 			Transport: &http.Transport{
@@ -33,43 +36,53 @@ func InitDB(region, accessKey, secretKey string) {
 		},
 	})
 	if err != nil {
-		panic(err)
+		logrus.Fatal("init DB: ", err)
 	}
 
 	db = dynamodb.New(sess)
 	info, err := db.DescribeEndpoints(&dynamodb.DescribeEndpointsInput{})
 	if err != nil {
-		panic(err)
+		logrus.Fatal("init DB, describe: ", err)
 	}
-	logrus.Info("dynamodb endpoint: ", info.Endpoints)
+	for _, ep := range info.Endpoints {
+		logrus.Info("dynamodb endpoint: ", strings.Replace(ep.String(), "\n", " ", -1))
+	}
+
+	for i := 0; i < 10; i++ {
+		go func() {
+			for dt := range addBitmapChan {
+				dt.OutError <- addBitmap(dt.Namespace, dt.Token, dt.Id)
+				fmt.Println(dt.Token)
+			}
+		}()
+	}
 }
 
 func IndexContent(nss []string, id, content string) error {
-	// if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
-	// 	TableName: &tableFTS,
-	// 	Key: map[string]*dynamodb.AttributeValue{
-	// 		"id":  {S: aws.String("d" + id)},
-	// 		"id2": {S: aws.String("")},
-	// 	},
-	// 	UpdateExpression: aws.String("set #a = :value"),
-	// 	ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-	// 		":value": {S: aws.String(content)},
-	// 	},
-	// 	ExpressionAttributeNames: map[string]*string{
-	// 		"#a": aws.String("content"),
-	// 	},
-	// }); err != nil {
-	// 	return fmt.Errorf("fts: failed to insert document: %v", err)
-	// }
-
 	tokens := ngram.Split(content)
 	addDoc(id, content)
+
+	var out = make(chan error, 1)
+	var n = 0
 	for _, ns := range nss {
 		for token := range tokens {
-			addBitmap(ns, token, id)
+			doc := &types.DocumentToken{
+				Namespace: ns,
+				Token:     token,
+				Id:        id,
+				OutError:  out,
+			}
+			addBitmapChan <- doc
+			n++
 		}
 	}
-	return nil
+	var lastErr error
+	for i := 0; i < n; i++ {
+		if err := <-out; err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }
 
 func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err error) {
@@ -116,10 +129,10 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 	for i, res := range res {
 		fmt.Printf("%02d %s\n", i, res)
 	}
-	for k := range bm.m {
-		fmt.Println(k)
-		break
-	}
+	// bm.m.Info(func(k lru.Key, v interface{}, x, y int64) {
+	fmt.Println(len(zzz))
+	fmt.Println(bm.m.Len())
+	// })
 	return
 }
 
@@ -136,11 +149,11 @@ type SearchDocument struct {
 	Content string
 }
 
-func (doc *SearchDocument) CreateTimeMilli() int64 {
+func (doc *SearchDocument) CreateTime() int64 {
 	ts, _ := clock.ParseStrUnix(doc.Id)
 	return ts
 }
 
 func (doc *SearchDocument) String() string {
-	return fmt.Sprintf("%d(%s): %q", doc.CreateTimeMilli(), doc.Id, doc.Content)
+	return fmt.Sprintf("%d(%s): %q", doc.CreateTime(), doc.Id, doc.Content)
 }
