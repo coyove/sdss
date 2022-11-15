@@ -1,10 +1,14 @@
 package dal
 
 import (
-	"sort"
+	"encoding/json"
+	"fmt"
 	"sync"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/coyove/sdss/contrib/clock"
+	"github.com/coyove/sdss/types"
 )
 
 var cm struct {
@@ -12,33 +16,82 @@ var cm struct {
 	m  map[string]string
 }
 
-func addDoc(id string, content string) {
-	cm.mu.Lock()
-	if cm.m == nil {
-		cm.m = map[string]string{}
+func addDoc(doc *types.Document) error {
+	// cm.mu.Lock()
+	// if cm.m == nil {
+	// 	cm.m = map[string]string{}
+	// }
+	// cm.m[id] = content
+	// cm.mu.Unlock()
+	if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
+		TableName: &tableFTS,
+		Key: map[string]*dynamodb.AttributeValue{
+			"nsid": {S: aws.String("doc")},
+			"ts":   {S: aws.String(doc.Id)},
+		},
+		UpdateExpression: aws.String("set #a = :value"),
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":value": {B: doc.MarshalBinary()},
+		},
+		ExpressionAttributeNames: map[string]*string{
+			"#a": aws.String("content"),
+		},
+	}); err != nil {
+		return fmt.Errorf("dal put document: store error: %v", err)
 	}
-	cm.m[id] = content
-	cm.mu.Unlock()
+	return nil
 }
 
-func getDoc(id string) (content string) {
-	cm.mu.Lock()
-	content = cm.m[id]
-	cm.mu.Unlock()
-	return
+func getDoc(id string) (doc *types.Document, err error) {
+	// cm.mu.Lock()
+	// content = cm.m[id]
+	// cm.mu.Unlock()
+	resp, err := db.GetItem(&dynamodb.GetItemInput{
+		TableName: &tableFTS,
+		Key: map[string]*dynamodb.AttributeValue{
+			"nsid": {S: aws.String("doc")},
+			"ts":   {S: aws.String(id)},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dal get document: store error: %v", err)
+	}
+
+	v := resp.Item["content"]
+	if v == nil {
+		return nil, nil
+	}
+	doc = &types.Document{}
+	return doc, json.Unmarshal(v.B, doc)
 }
 
-func scanDoc(milli int64) (ids []string) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	lower := clock.UnixToIdStr(milli)
-	upper := clock.UnixToIdStr(milli + 1)
-	for k := range cm.m {
-		if k >= lower && k < upper {
-			ids = append(ids, k)
+func scanDoc(unix int64) (docs []*types.Document, err error) {
+	lower := clock.UnixToIdStr(unix)
+	run := func(upper string) {
+		resp, err := db.Query(&dynamodb.QueryInput{
+			TableName:              &tableFTS,
+			KeyConditionExpression: aws.String("nsid = :pk and #ts between :lower and :upper"),
+			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+				":pk":    {S: aws.String("doc")},
+				":lower": {S: aws.String(lower)},
+				":upper": {S: aws.String(upper)},
+			},
+			ExpressionAttributeNames: map[string]*string{
+				"#ts": aws.String("ts"),
+			},
+			ScanIndexForward: aws.Bool(false),
+		})
+		if err != nil {
+			err = fmt.Errorf("dal scan document: store error: %v", err)
+			return
+		}
+		for _, item := range resp.Items {
+			doc := &types.Document{}
+			json.Unmarshal(item["content"].B, doc)
+			docs = append(docs, doc)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
+	run(clock.UnixToIdStr(unix + 1))
 	return
 }
 

@@ -59,9 +59,11 @@ func InitDB() {
 	}
 }
 
-func IndexContent(nss []string, id, content string) error {
-	tokens := ngram.Split(content)
-	addDoc(id, content)
+func IndexContent(nss []string, doc *types.Document) error {
+	tokens := ngram.Split(doc.Content)
+	if err := addDoc(doc); err != nil {
+		return err
+	}
 
 	var out = make(chan error, 1)
 	var n = 0
@@ -70,7 +72,7 @@ func IndexContent(nss []string, id, content string) error {
 			doc := &types.DocumentToken{
 				Namespace: ns,
 				Token:     token,
-				Id:        id,
+				Id:        doc.Id,
 				OutError:  out,
 			}
 			addBitmapChan <- doc
@@ -99,11 +101,16 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 
 	cursor.Exhausted = true
 	mergeBitmaps(ns, includes, nil, start, cursor.EndUnix, func(ts int64) bool {
-		for _, id := range scanDoc(ts) {
-			if id > cursor.Start {
+		docs, err0 := scanDoc(ts)
+		if err != nil {
+			err = err0
+			return false
+		}
+		for _, doc := range docs {
+			if doc.Id > cursor.Start {
 				continue
 			}
-			content := getDoc(id)
+			content := doc.Content
 			score := 0.0
 			for _, name := range includes {
 				if strings.Contains(content, name) {
@@ -112,8 +119,7 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 			}
 			if score >= float64(len(includes))/2 {
 				res = append(res, &SearchDocument{
-					Id:      id,
-					Content: content,
+					Document: *doc,
 				})
 			}
 		}
@@ -145,15 +151,5 @@ type SearchCursor struct {
 }
 
 type SearchDocument struct {
-	Id      string
-	Content string
-}
-
-func (doc *SearchDocument) CreateTime() int64 {
-	ts, _ := clock.ParseStrUnix(doc.Id)
-	return ts
-}
-
-func (doc *SearchDocument) String() string {
-	return fmt.Sprintf("%d(%s): %q", doc.CreateTime(), doc.Id, doc.Content)
+	types.Document
 }

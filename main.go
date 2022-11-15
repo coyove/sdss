@@ -9,12 +9,13 @@ import (
 
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/dal"
+	"github.com/coyove/sdss/types"
 )
 
 func main() {
 	runtime.GOMAXPROCS(2)
-	// types.LoadConfig("config.json")
-	// dal.InitDB()
+	types.LoadConfig("config.json")
+	dal.InitDB()
 
 	if true {
 		f, err := os.Open(os.Getenv("HOME") + "/Downloads/a.txt")
@@ -32,20 +33,22 @@ func main() {
 			if len(line) == 0 {
 				continue
 			}
-			dal.IndexContent([]string{"a"}, clock.IdStr(), line)
-			if ln%1000 == 0 {
-				fmt.Println("index", ln)
+			doc := &types.Document{
+				Id:      clock.IdStr(),
+				Content: line,
 			}
-			if ln > 10000 {
-				break
+			dal.IndexContent([]string{"a"}, doc)
+			if ln%1 == 0 {
+				fmt.Println("index", ln, doc.Id, doc.CreateTime(), line)
 			}
+			break
 		}
 	}
 
 	c := &dal.SearchCursor{
-		Query:   "华夏",
+		Query:   "自己",
 		Start:   clock.IdStr(),
-		EndUnix: clock.Unix() - 60,
+		EndUnix: clock.Unix() - 6000,
 		Count:   5,
 	}
 	for !c.Exhausted {
