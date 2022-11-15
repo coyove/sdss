@@ -140,7 +140,9 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 	wg.Wait()
 
 	if final == nil {
-		var out = make([]int, len(includes))
+		// No hits in current time block (start),
+		// so we will search for the nearest block among all tokens.
+		out := make([]int, len(includes))
 		for i, token := range includes {
 			wg.Add(1)
 			go func(i int, partKey string) {

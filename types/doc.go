@@ -12,6 +12,11 @@ type Document struct {
 	Content string `json:"C"`
 }
 
+func (doc Document) PartKey() string {
+	ts := doc.CreateTime()
+	return fmt.Sprintf("doc%d", ts>>16)
+}
+
 func (doc *Document) MarshalBinary() []byte {
 	buf, _ := json.Marshal(doc)
 	return buf
