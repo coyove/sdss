@@ -42,7 +42,7 @@ func StrHash(s string) uint32 {
 	const offset32 = 2166136261
 	const prime32 = 16777619
 	var hash uint32 = offset32
-	for i := range s {
+	for i := 0; i < len(s); i++ {
 		hash *= prime32
 		hash ^= uint32(s[i])
 	}

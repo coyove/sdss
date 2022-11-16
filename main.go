@@ -17,7 +17,7 @@ func main() {
 	types.LoadConfig("config.json")
 	dal.InitDB()
 
-	if false {
+	if true {
 		f, err := os.Open(os.Getenv("HOME") + "/Downloads/a.txt")
 		if err != nil {
 			panic(err)
@@ -33,6 +33,9 @@ func main() {
 			if len(line) == 0 {
 				continue
 			}
+			if ln <= 4 {
+				continue
+			}
 			doc := &types.Document{
 				Id:      clock.IdStr(),
 				Content: line,
@@ -41,19 +44,20 @@ func main() {
 			if ln%1 == 0 {
 				fmt.Println("index", ln, doc.Id, doc.CreateTime(), line)
 			}
-			if ln > 3 {
+			if ln > 30 {
 				break
 			}
 		}
 	}
 
 	c := &dal.SearchCursor{
-		Query:   "学校朋友",
+		Query:   "娃娃",
 		Start:   clock.IdStr(),
-		EndUnix: clock.Unix() - 6000,
+		EndUnix: clock.Unix() - 600,
 		Count:   5,
 	}
 	for !c.Exhausted {
 		dal.SearchContent("a", c)
 	}
+
 }

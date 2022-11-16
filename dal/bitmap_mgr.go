@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/RoaringBitmap/roaring"
 	"github.com/aws/aws-sdk-go/aws"
@@ -13,6 +14,7 @@ import (
 	"github.com/coyove/common/lru"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/types"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -23,22 +25,89 @@ const (
 type bitmap struct {
 	*roaring.Bitmap
 	sync.RWMutex
-	key string
+	nsid  string
+	ts    string
+	dirty bool
 }
 
-var zzz sync.Map
-
 var bm struct {
-	m      *lru.Cache
+	hot    sync.Map
+	cache  *lru.Cache
 	loader singleflight.Group
 }
 
 func init() {
-	// os.MkdirAll("token_test", 0777)
-	bm.m = lru.NewCache(1000)
+	bm.cache = lru.NewCache(1000)
+	// hotBitmapsUpdater()
 }
 
-// hash(ns + name) into 12 bits, 16 + 16
+func hotBitmapsUpdater() {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.Error("hotBitmapsUpdater fatal: ", r)
+		}
+		time.AfterFunc(time.Second*5, hotBitmapsUpdater)
+	}()
+
+	var pendings []*bitmap
+	var toDeletes []string
+	var total int
+	var deletePivot = clock.UnixToIdStr(clock.Unix() - bitmapTimeSpan*2)
+
+	bm.hot.Range(func(k, v interface{}) bool {
+		b := v.(*bitmap)
+		if b.ts < deletePivot && !b.dirty {
+			toDeletes = append(toDeletes, k.(string))
+		} else if b.dirty {
+			pendings = append(pendings, b)
+		}
+		total++
+		return true
+	})
+
+	logrus.Infof("hotBitmapsUpdater payloads: %d deletes, %d updates, %d total",
+		len(toDeletes), len(pendings), total)
+
+	for _, k := range toDeletes {
+		bm.hot.Delete(k)
+	}
+
+	if len(pendings) == 0 {
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, b := range pendings {
+		b.RLock()
+		buf, _ := b.MarshalBinary()
+		b.dirty = false
+		b.RUnlock()
+
+		wg.Add(1)
+		go func(nsid, ts string) {
+			defer wg.Done()
+			if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
+				TableName: &tableFTS,
+				Key: map[string]*dynamodb.AttributeValue{
+					"nsid": {S: aws.String(nsid)},
+					"ts":   {S: aws.String(ts)},
+				},
+				UpdateExpression: aws.String("set #a = :value"),
+				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+					":value": {B: buf},
+				},
+				ExpressionAttributeNames: map[string]*string{
+					"#a": aws.String("content"),
+				},
+			}); err != nil {
+				logrus.Errorf("hotBitmapsUpdater store error, key: %s.%s: %v", nsid, ts, err)
+			}
+		}(b.nsid, b.ts)
+	}
+	wg.Wait()
+}
+
+// hash(ns + name) into 8 bits, 16 + 16
 func addBitmap(ns, token, id string) error {
 	idUnix, ok := clock.ParseStrUnix(id)
 	if !ok {
@@ -50,14 +119,15 @@ func addBitmap(ns, token, id string) error {
 	unixStr := fmt.Sprintf("%016x", normalizedUnix)
 	key := partKey + unixStr
 
-	cached, ok := bm.m.Get(key)
+	cached, ok := bm.hot.Load(key)
 	if !ok {
 		loaded, err, _ := bm.loader.Do(key, func() (interface{}, error) {
 			v, err := dalGetBitmap(partKey, unixStr)
 			if v == nil && err == nil {
 				v = &bitmap{
 					Bitmap: roaring.NewBitmap(),
-					key:    key,
+					nsid:   partKey,
+					ts:     unixStr,
 				}
 			}
 			return v, err
@@ -66,22 +136,44 @@ func addBitmap(ns, token, id string) error {
 			return err
 		}
 		cached = loaded
-		bm.m.Add(key, loaded)
+		bm.hot.Store(key, loaded)
 	}
 
 	m, _ := cached.(*bitmap)
 	diff := idUnix - normalizedUnix
 	m.Lock()
-	m.CheckedAdd((types.StrHash(token)&0xffff)<<16 | uint32(diff))
+	if m.CheckedAdd((types.StrHash(token)&0xffff)<<16 | uint32(diff)) {
+		m.dirty = true
+	}
+	buf, _ := m.MarshalBinary()
 	m.Unlock()
 
-	return dalPutBitmap(partKey, unixStr, m)
+	if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
+		TableName: &tableFTS,
+		Key: map[string]*dynamodb.AttributeValue{
+			"nsid": {S: aws.String(partKey)},
+			"ts":   {S: aws.String(unixStr)},
+		},
+		UpdateExpression: aws.String("set #a = :value"),
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":value": {B: buf},
+		},
+		ExpressionAttributeNames: map[string]*string{
+			"#a": aws.String("content"),
+		},
+	}); err != nil {
+		logrus.Errorf("hotBitmapsUpdater store error, key: %s.%s: %v", partKey, unixStr, err)
+	}
+	return nil //dalPutBitmap(partKey, unixStr, m)
 }
 
 func accessBitmapReadonly(partKey string, unix int64, f func(*bitmap)) error {
 	unixStr := fmt.Sprintf("%016x", unix)
 	cacheKey := partKey + unixStr
-	cached, ok := bm.m.Get(cacheKey)
+	cached, ok := bm.hot.Load(cacheKey)
+	if !ok {
+		cached, ok = bm.cache.Get(cacheKey)
+	}
 	if !ok {
 		loaded, err, _ := bm.loader.Do(cacheKey, func() (interface{}, error) {
 			v, err := dalGetBitmap(partKey, unixStr)
@@ -98,7 +190,7 @@ func accessBitmapReadonly(partKey string, unix int64, f func(*bitmap)) error {
 			return nil
 		}
 		cached, _ = loaded.(*bitmap)
-		bm.m.Add(cacheKey, cached)
+		bm.cache.Add(cacheKey, cached)
 	}
 	b := cached.(*bitmap)
 	b.RLock()
@@ -184,24 +276,30 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 	}
 
 	iter := final.ReverseIterator()
+	tsDedup := roaring.New()
 	for iter.HasNext() {
 		tmp := iter.Next()
-		ts := int64(tmp&0xffff) + start
+		offset := tmp & 0xffff
+		ts := int64(offset) + start
 		if !dict.Contains(tmp >> 16) {
 			continue
 		}
 		if ts > rawStart {
 			continue
 		}
+		if tsDedup.Contains(offset) {
+			continue
+		}
 		if !f(ts) {
 			return nil
 		}
+		tsDedup.Add(offset)
 	}
-	return mergeBitmaps(ns, includes, excludes, start-bitmapTimeSpan, end, f)
+	return mergeBitmaps(ns, includes, excludes, start-1, end, f)
 }
 
 func genBitmapPartKey(ns, token string) string {
-	return fmt.Sprintf("%s#%03x", ns, types.StrHash(token)&0xfff)
+	return fmt.Sprintf("%s#%02x", ns, (types.StrHash(token)>>8)&0xff)
 }
 
 func dalGetBitmap(nsid, unix string) (*bitmap, error) {
@@ -238,35 +336,7 @@ func dalGetBitmap(nsid, unix string) (*bitmap, error) {
 	}
 	return &bitmap{
 		Bitmap: m,
-		key:    nsid,
+		nsid:   nsid,
+		ts:     unix,
 	}, nil
-}
-
-func dalPutBitmap(nsid string, unix string, b *bitmap) error {
-	b.RLock()
-	buf, err := b.MarshalBinary()
-	b.RUnlock()
-	if err != nil {
-		return err
-	}
-	// zzz.Store(nsid+unix, buf)
-	// return nil
-
-	if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
-		TableName: &tableFTS,
-		Key: map[string]*dynamodb.AttributeValue{
-			"nsid": {S: aws.String(nsid)},
-			"ts":   {S: aws.String(unix)},
-		},
-		UpdateExpression: aws.String("set #a = :value"),
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":value": {B: buf},
-		},
-		ExpressionAttributeNames: map[string]*string{
-			"#a": aws.String("content"),
-		},
-	}); err != nil {
-		return fmt.Errorf("dal put bitmap: store error: %v", err)
-	}
-	return nil
 }

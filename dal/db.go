@@ -117,6 +117,7 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 					score++
 				}
 			}
+			// fmt.Println(ts, doc, score, len(includes), includes)
 			if score >= float64(len(includes))/2 {
 				res = append(res, &SearchDocument{
 					Document: *doc,
@@ -136,9 +137,6 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 	for i, res := range res {
 		fmt.Printf("%02d %s\n", i, res)
 	}
-	// bm.m.Info(func(k lru.Key, v interface{}, x, y int64) {
-	fmt.Println(bm.m.Len())
-	// })
 	return
 }
 
