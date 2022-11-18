@@ -1,42 +1,67 @@
 package bitmap
 
 import (
-	"bytes"
-	"compress/gzip"
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 
-	"github.com/RoaringBitmap/roaring"
 	"github.com/coyove/sdss/contrib/clock"
 )
 
 func TestBitmap(t *testing.T) {
-	now := clock.Unix()
+	now := clock.Unix() / halfday * halfday
+	rand.Seed(now)
 	b := New(now)
-	m := roaring.New()
-	m2 := roaring.New()
 
-	for t := 0; t < 3000; t++ {
-		for i := 0; i < 1e3; i++ {
+	var xx []uint32
+	var tmp []uint32
+	for t := 0; t < halfday; t++ {
+		N := 1000
+		big := false
+		if rand.Intn(5) == 0 {
+			N = 10000
+			big = true
+		}
+		for i := 0; i < N; i++ {
 			v := rand.Uint32()
-			b.Add(now+int64(t), v&0xfffff)
-			m.Add(uint32(t)<<16 | v&0xffff)
-			m2.Add(uint32(t)<<16 | (v>>16)&0xffff)
+			b.Add(now+int64(t), v)
+			xx = append(xx, v)
+			if big {
+				tmp = append(tmp, v)
+			}
 		}
 	}
-	x := b.MarshalBinary()
 
-	tmp := &bytes.Buffer{}
-	{
-		out := gzip.NewWriter(tmp)
-		buf, _ := m.MarshalBinary()
-		out.Write(buf)
-		out.Flush()
+	start := clock.Now()
+	x := b.MarshalBinary(now + 10000)
+	fmt.Println(len(x), time.Since(start), b)
+
+	b, _ = UnmarshalBinary(x)
+
+	for t := 10000; t < 15000; t++ {
+		for i := 0; i < 10000; i++ {
+			v := rand.Uint32()
+			b.Add(now+int64(t), v)
+		}
 	}
-	fmt.Println(len(x), m.GetSerializedSizeInBytes()+m2.GetSerializedSizeInBytes(), tmp.Len())
-	return
 
-	b, _ = FromBinary(x)
-	fmt.Println(b.MergeTimestamps([]uint32{1, 10, 9}), len(x))
+	start = clock.Now()
+	x = b.MarshalBinary(now + 20000)
+	fmt.Println(len(x), time.Since(start), b)
+
+	start = clock.Now()
+	x = b.MarshalBinary(now + halfday)
+	fmt.Println(len(x), time.Since(start), b)
+
+	b, _ = UnmarshalBinary(x)
+
+	start = clock.Now()
+	res := b.Merge(tmp[0:1])
+	fmt.Println(time.Since(start))
+
+	res.Iterate(func(ts int64) bool {
+		// fmt.Println(ts)
+		return true
+	})
 }
