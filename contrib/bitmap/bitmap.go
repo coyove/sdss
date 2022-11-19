@@ -13,11 +13,9 @@ import (
 )
 
 const (
-	halfday = 43200
-	span    = 600 // 10 minutes range
-	// 1800 271
-	// 1200 266
-	// 600 263
+	halfday          = 43200
+	span             = 600 // 10 minutes range
+	lowhighThreshold = 4096
 )
 
 var andTable [halfday / span]*roaring.Bitmap
@@ -30,17 +28,19 @@ func init() {
 	return
 }
 
-type Bitmap struct {
+type HalfDay struct {
 	mu          sync.RWMutex
 	baseTime    int64
 	lastCompact int16
 
 	low  *roaring.Bitmap   // 16 bits ts + 16 bits hash
 	high *roaring64.Bitmap // 16 bits ts + 24 bits hash
+
+	tsq [halfday / 8]byte
 }
 
-func New(baseTime int64) *Bitmap {
-	m := &Bitmap{
+func New(baseTime int64) *HalfDay {
+	m := &HalfDay{
 		baseTime: baseTime / halfday * halfday,
 		low:      roaring.New(),
 		high:     roaring64.New(),
@@ -48,8 +48,12 @@ func New(baseTime int64) *Bitmap {
 	return m
 }
 
-func (b *Bitmap) Add(ts int64, v uint32) bool {
-	if ts-b.baseTime > halfday {
+func (b *HalfDay) BaseTime() int64 {
+	return b.baseTime
+}
+
+func (b *HalfDay) Add(ts int64, v uint32) bool {
+	if ts-b.baseTime > halfday || ts < b.baseTime {
 		panic(fmt.Sprintf("invalid timestamp: %v, base: %v", ts, b.baseTime))
 	}
 
@@ -62,15 +66,41 @@ func (b *Bitmap) Add(ts int64, v uint32) bool {
 	}
 
 	b.low.Add(h16(offset, v))
-	return b.high.CheckedAdd(h24(offset, v))
+	added := b.high.CheckedAdd(h24(offset, v))
+	if added {
+		b.tsq[offset/8] |= 1 << (offset % 8)
+	}
+	return added
 }
 
-func (b *Bitmap) Merge(vs []uint32) (res MergeResult) {
+func (b *HalfDay) Merge(vs []uint32) (res MergeResult) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	res.m = roaring.New()
 	res.baseTime = b.baseTime
+
+	hyped := false
+	{ // iterate "high" area
+		iter := b.high.Iterator()
+		for iter.HasNext() {
+			offset := iter.Next() >> 24
+
+			for _, v := range vs {
+				if b.high.Contains(h24(uint32(offset), v)) {
+					res.m.Add(uint32(offset))
+					break
+				}
+			}
+
+			iter.AdvanceIfNeeded((offset + 1) << 24)
+			hyped = true
+		}
+	}
+
+	if hyped {
+		return
+	}
 
 	{ // iterate "low" area
 		iter := b.low.Iterator()
@@ -87,39 +117,27 @@ func (b *Bitmap) Merge(vs []uint32) (res MergeResult) {
 			iter.AdvanceIfNeeded((offset + 1) << 16)
 		}
 	}
-
-	{ // iterate "high" area
-		iter := b.high.Iterator()
-		for iter.HasNext() {
-			offset := iter.Next() >> 24
-
-			for _, v := range vs {
-				if b.high.Contains(h24(uint32(offset), v)) {
-					res.m.Add(uint32(offset))
-					break
-				}
-			}
-
-			iter.AdvanceIfNeeded((offset + 1) << 24)
-		}
-	}
 	return
 }
 
-func UnmarshalBinary(buf []byte) (*Bitmap, error) {
+func UnmarshalBinary(buf []byte) (*HalfDay, error) {
 	//rd, err := gzip.NewReader(bytes.NewReader(buf))
 	//if err != nil {
 	//	return nil, fmt.Errorf("create gzip reader: %v", err)
 	//}
 	rd := bytes.NewReader(buf)
 
-	b := &Bitmap{}
+	b := &HalfDay{}
 	if err := binary.Read(rd, binary.BigEndian, &b.baseTime); err != nil {
 		return nil, fmt.Errorf("read baseTime: %v", err)
 	}
 
 	if err := binary.Read(rd, binary.BigEndian, &b.lastCompact); err != nil {
 		return nil, fmt.Errorf("read lastCompact: %v", err)
+	}
+
+	if err := binary.Read(rd, binary.BigEndian, b.tsq[:]); err != nil {
+		return nil, fmt.Errorf("read tsq: %v", err)
 	}
 
 	var topSize uint64
@@ -144,7 +162,7 @@ func UnmarshalBinary(buf []byte) (*Bitmap, error) {
 	return b, nil
 }
 
-func (b *Bitmap) MarshalBinary(compactBefore int64) []byte {
+func (b *HalfDay) MarshalBinary(compactBefore int64) []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -155,14 +173,15 @@ func (b *Bitmap) MarshalBinary(compactBefore int64) []byte {
 	for h := b.lastCompact; h < int16(hend); h++ {
 		sec := uint64(h) * span
 		count := b.low.AndCardinality(andTable[h])
-		if count > span*4096 {
+		dist := b.getTimeDistInSpan(int(sec))
+		if int(count) > dist*lowhighThreshold {
 			// "low" area is dense, use "high" area.
 			b.low.RemoveRange(sec<<16, (sec+span)<<16)
-			fmt.Println(h, "high", count)
+			// fmt.Println(h, "high", count)
 		} else {
 			// "low" area is sparse, no need to store "high" area.
 			b.high.RemoveRange(sec<<24, (sec+span)<<24)
-			fmt.Println(h, "low", count)
+			// fmt.Println(h, "low", count)
 		}
 	}
 
@@ -174,6 +193,7 @@ func (b *Bitmap) MarshalBinary(compactBefore int64) []byte {
 
 	binary.Write(buf, binary.BigEndian, b.baseTime)
 	binary.Write(buf, binary.BigEndian, b.lastCompact)
+	binary.Write(buf, binary.BigEndian, b.tsq[:])
 
 	binary.Write(buf, binary.BigEndian, b.low.GetSerializedSizeInBytes())
 	b.low.WriteTo(buf)
@@ -222,7 +242,16 @@ func combinehash(a, b uint32) uint32 {
 	return a
 }
 
-func (b *Bitmap) String() string {
+func (b *HalfDay) getTimeDistInSpan(spanStart int) (res int) {
+	for ts := spanStart; ts < spanStart+span; ts++ {
+		if (b.tsq[ts/8]>>(ts%8))&1 == 1 {
+			res++
+		}
+	}
+	return res
+}
+
+func (b *HalfDay) String() string {
 	buf := &bytes.Buffer{}
 	fmt.Fprintf(buf, "base:    %v\n", time.Unix(b.baseTime, 0).Format(time.ANSIC))
 	fmt.Fprintf(buf, "compact: %v\n", b.lastCompact)
@@ -230,19 +259,25 @@ func (b *Bitmap) String() string {
 	fmt.Fprintf(buf, "high:    %v\n", b.high.GetSerializedSizeInBytes())
 	fmt.Fprintf(buf, "#low:    %v\n", b.low.GetCardinality())
 	fmt.Fprintf(buf, "#high:   %v\n", b.high.GetCardinality())
-	fmt.Fprintf(buf, "     %-10s %-10s      %-10s %-10s      %-10s %-10s\n", "low", "high", "low", "high", "low", "high")
+
+	const N = 3
+	for i := 0; i < N; i++ {
+		fmt.Fprintf(buf, "     %-4s %-10s %-10s", "dist", "low", "high")
+	}
+	fmt.Fprintf(buf, "\n")
 
 	for h := 0; h < len(andTable); h += 3 {
-		m := [3]*roaring64.Bitmap{}
+		m := [N]*roaring64.Bitmap{}
 		for i := range m {
 			m[i] = roaring64.New()
 			m[i].AddRange(uint64((h+i)*span)<<24, uint64((h+i)*span+span)<<24)
 		}
-		fmt.Fprintf(buf, "[%02d] %-10v %-10v [%02d] %-10v %-10v [%02d] %-10v %-10v\n",
-			h+0, b.low.AndCardinality(andTable[h]), b.high.AndCardinality(m[0]),
-			h+1, b.low.AndCardinality(andTable[h+1]), b.high.AndCardinality(m[1]),
-			h+2, b.low.AndCardinality(andTable[h+2]), b.high.AndCardinality(m[2]),
-		)
+		for i := 0; i < N; i++ {
+			fmt.Fprintf(buf, "[%02d] %-4v %-10v %-10v",
+				h+i, b.getTimeDistInSpan((h+i)*span), b.low.AndCardinality(andTable[h+i]), b.high.AndCardinality(m[i]),
+			)
+		}
+		fmt.Fprintf(buf, "\n")
 	}
 	return buf.String()
 }

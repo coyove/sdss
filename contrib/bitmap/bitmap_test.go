@@ -1,13 +1,51 @@
 package bitmap
 
 import (
+	"bytes"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/coyove/sdss/contrib/clock"
+	"github.com/coyove/sdss/contrib/ngram"
+	"github.com/coyove/sdss/types"
 )
+
+func TestBitmap2(t *testing.T) {
+	now := clock.Unix() / halfday * halfday
+	rand.Seed(now)
+	b := New(now)
+	buf, _ := ioutil.ReadFile(os.Getenv("HOME") + "/a.txt")
+	lines := bytes.Split(buf, []byte("\n"))
+	tmp := map[uint32]int{}
+	for i, line := range lines {
+		for k := range ngram.Split(string(line)) {
+			h := types.StrHash(k)
+			b.Add(clock.Unix(), h)
+			tmp[h]++
+		}
+		if i%1000 == 0 {
+			time.Sleep(100 * time.Millisecond)
+			log.Println(i, len(lines))
+		}
+	}
+	x := b.MarshalBinary(clock.Unix() + halfday)
+	// fmt.Println(len(tmp), b)
+	b, _ = UnmarshalBinary(x)
+
+	var q []uint32
+	for k := range ngram.Split("zzz Bheeni ") {
+		q = append(q, types.StrHash(k))
+	}
+	b.Merge(q).Iterate(func(ts int64) bool {
+		fmt.Println(ts)
+		return true
+	})
+}
 
 func TestBitmap(t *testing.T) {
 	now := clock.Unix() / halfday * halfday

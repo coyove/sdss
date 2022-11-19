@@ -45,7 +45,7 @@ func Split(text string) (res map[string]float64) {
 		}
 
 		lastr := utf8.RuneError
-		runeCount, old := 0, v
+		runeCount := 0
 		for len(v) > 0 {
 			r, sz := utf8.DecodeRuneInString(v)
 			v = v[sz:]
@@ -60,10 +60,6 @@ func Split(text string) (res map[string]float64) {
 
 			lastr = r
 			runeCount++
-		}
-
-		if runeCount <= 4 {
-			res[old]++
 		}
 	}
 
