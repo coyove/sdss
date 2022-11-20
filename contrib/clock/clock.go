@@ -13,6 +13,9 @@ import (
 //go:linkname runtimeNano runtime.nanotime
 func runtimeNano() int64
 
+//go:linkname now time.now
+func now() (sec int64, nsec int32, mono int64)
+
 var (
 	startupNano     int64
 	startupWallNano int64

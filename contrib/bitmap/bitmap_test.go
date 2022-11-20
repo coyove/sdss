@@ -1,12 +1,13 @@
 package bitmap
 
 import (
-	"bytes"
+	"encoding/csv"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,32 +20,55 @@ func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / halfday * halfday
 	rand.Seed(now)
 	b := New(now)
-	buf, _ := ioutil.ReadFile(os.Getenv("HOME") + "/a.txt")
-	lines := bytes.Split(buf, []byte("\n"))
-	tmp := map[uint32]int{}
-	for i, line := range lines {
+
+	cached, _ := ioutil.ReadFile("cache")
+	if len(cached) > 0 {
+		b, _ = UnmarshalBinary(cached)
+	}
+	fmt.Println(b)
+
+	f, _ := os.Open(os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv")
+	defer f.Close()
+
+	rd := csv.NewReader(f)
+	for i := 0; false && i <= 2000000; i++ {
+		records, err := rd.Read()
+		if err != nil {
+			break
+		}
+
+		if i < 1e6 {
+			continue
+		}
+
+		line := strings.Join(records, " ")
 		for k := range ngram.Split(string(line)) {
 			h := types.StrHash(k)
-			b.Add(clock.Unix(), h)
-			tmp[h]++
+			b.Add(clock.Unix(), uint8(i), h)
 		}
+
 		if i%1000 == 0 {
-			time.Sleep(100 * time.Millisecond)
-			log.Println(i, len(lines))
+			log.Println(i)
+			time.Sleep(time.Millisecond * 200)
 		}
 	}
-	x := b.MarshalBinary(clock.Unix() + halfday)
-	// fmt.Println(len(tmp), b)
-	b, _ = UnmarshalBinary(x)
+	x := b.MarshalBinary(clock.Unix())
+	fmt.Println(len(x), b)
 
+	ioutil.WriteFile("cache", x, 0777)
+
+	start := clock.Now()
 	var q []uint32
-	for k := range ngram.Split("zzz Bheeni ") {
+	for k := range ngram.Split("breadcrumb") {
 		q = append(q, types.StrHash(k))
 	}
-	b.Merge(q).Iterate(func(ts int64) bool {
-		fmt.Println(ts)
+	b.Join(q).Iterate(func(ts int64, tag, s int) bool {
+		if int(s) == len(q) {
+			// fmt.Println(ts, tag)
+		}
 		return true
 	})
+	fmt.Println(time.Since(start))
 }
 
 func TestBitmap(t *testing.T) {
@@ -63,7 +87,7 @@ func TestBitmap(t *testing.T) {
 		}
 		for i := 0; i < N; i++ {
 			v := rand.Uint32()
-			b.Add(now+int64(t), v)
+			b.Add(now+int64(t), uint8(i), v)
 			xx = append(xx, v)
 			if big {
 				tmp = append(tmp, v)
@@ -80,7 +104,7 @@ func TestBitmap(t *testing.T) {
 	for t := 10000; t < 15000; t++ {
 		for i := 0; i < 10000; i++ {
 			v := rand.Uint32()
-			b.Add(now+int64(t), v)
+			b.Add(now+int64(t), uint8(i), v)
 		}
 	}
 
@@ -93,13 +117,4 @@ func TestBitmap(t *testing.T) {
 	fmt.Println(len(x), time.Since(start), b)
 
 	b, _ = UnmarshalBinary(x)
-
-	start = clock.Now()
-	res := b.Merge(tmp[0:1])
-	fmt.Println(time.Since(start))
-
-	res.Iterate(func(ts int64) bool {
-		// fmt.Println(ts)
-		return true
-	})
 }
