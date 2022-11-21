@@ -89,23 +89,30 @@ func IndexContent(nss []string, doc *types.Document) error {
 }
 
 func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err error) {
-	var includes []string
+	var includes, excludes []string
 	for k := range ngram.Split(cursor.Query) {
 		includes = append(includes, k)
 	}
+	for k := range ngram.Split(cursor.Exclude) {
+		excludes = append(excludes, k)
+	}
 
-	start, ok := clock.ParseStrUnixDeciDeci(cursor.Start)
+	start, ok := clock.ParseStrUnixDeci(cursor.Start)
 	if !ok {
 		return nil, fmt.Errorf("invalid cursor start: %q", cursor.Start)
 	}
 
 	cursor.Exhausted = true
-	mergeBitmaps(ns, includes, nil, start, cursor.EndUnix, func(ts int64) bool {
+	var docTotal, docHits float64
+	mergeBitmaps(ns, includes, excludes, start, cursor.EndUnix, func(ts int64) bool {
 		docs, err0 := scanDoc(ts)
 		if err != nil {
 			err = err0
 			return false
 		}
+
+		fmt.Println("cand", ts, len(docs))
+		docTotal += float64(len(docs))
 		for _, doc := range docs {
 			if doc.Id > cursor.Start {
 				continue
@@ -117,8 +124,10 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 					score++
 				}
 			}
+			fmt.Println("===", doc.Id, score)
 			// fmt.Println(ts, doc, score, len(includes), includes)
 			if score >= float64(len(includes))/2 {
+				docHits++
 				res = append(res, &SearchDocument{
 					Document: *doc,
 				})
@@ -134,18 +143,26 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 		return true
 	})
 
+	cursor.FalseRate = 0
+	if docTotal > 0 {
+		cursor.FalseRate = docHits / docTotal
+	}
+
 	for i, res := range res {
 		fmt.Printf("%02d %s\n", i, res)
 	}
+	fmt.Println(cursor.FalseRate, docHits, docTotal)
 	return
 }
 
 type SearchCursor struct {
 	Query     string
+	Exclude   string
 	Start     string
 	EndUnix   int64
 	Count     int
 	Exhausted bool
+	FalseRate float64
 }
 
 type SearchDocument struct {

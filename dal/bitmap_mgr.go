@@ -2,33 +2,18 @@ package dal
 
 import (
 	"fmt"
-	"sort"
-	"strconv"
-	"strings"
+	"io/ioutil"
+	"os"
 	"sync"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/coyove/common/lru"
+	"github.com/coyove/sdss/contrib/bitmap"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/types"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/singleflight"
 )
-
-const (
-	bitmapTimeSpan = 10 // 86400 * 10 // 10 days
-)
-
-type bitmap struct {
-	*roaring.Bitmap
-	sync.RWMutex
-	nsid  string
-	ts    string
-	dirty bool
-}
 
 var bm struct {
 	hot    sync.Map
@@ -36,9 +21,16 @@ var bm struct {
 	loader singleflight.Group
 }
 
+type NSBitmap struct {
+	*bitmap.Day
+	ns      string
+	unixStr string
+}
+
 func init() {
-	bm.cache = lru.NewCache(1000)
-	// hotBitmapsUpdater()
+	bm.cache = lru.NewCache(50)
+	os.MkdirAll("bitmap_cache", 0777)
+	hotBitmapsUpdater()
 }
 
 func hotBitmapsUpdater() {
@@ -49,85 +41,47 @@ func hotBitmapsUpdater() {
 		time.AfterFunc(time.Second*5, hotBitmapsUpdater)
 	}()
 
-	var pendings []*bitmap
-	var toDeletes []string
-	var total int
-	var deletePivot = clock.UnixDeciToIdStr(clock.Unix() - bitmapTimeSpan*2)
+	var pendings []*NSBitmap
 
 	bm.hot.Range(func(k, v interface{}) bool {
-		b := v.(*bitmap)
-		if b.ts < deletePivot && !b.dirty {
-			toDeletes = append(toDeletes, k.(string))
-		} else if b.dirty {
-			pendings = append(pendings, b)
-		}
-		total++
+		b := v.(*NSBitmap)
+		pendings = append(pendings, b)
 		return true
 	})
 
-	logrus.Infof("hotBitmapsUpdater payloads: %d deletes, %d updates, %d total",
-		len(toDeletes), len(pendings), total)
-
-	for _, k := range toDeletes {
-		bm.hot.Delete(k)
+	sz, fails := 0, 0
+	for _, m := range pendings {
+		x := m.MarshalBinary()
+		if err := ioutil.WriteFile("bitmap_cache/"+m.ns+m.unixStr, x, 0777); err != nil {
+			logrus.Errorf("hotBitmapsUpdater write cache %s %s: %v", m.ns, m.unixStr, err)
+			fails++
+		} else {
+			sz += len(x)
+		}
 	}
-
-	if len(pendings) == 0 {
-		return
-	}
-
-	var wg sync.WaitGroup
-	for _, b := range pendings {
-		b.RLock()
-		buf, _ := b.MarshalBinary()
-		b.dirty = false
-		b.RUnlock()
-
-		wg.Add(1)
-		go func(nsid, ts string) {
-			defer wg.Done()
-			if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
-				TableName: &tableFTS,
-				Key: map[string]*dynamodb.AttributeValue{
-					"nsid": {S: aws.String(nsid)},
-					"ts":   {S: aws.String(ts)},
-				},
-				UpdateExpression: aws.String("set #a = :value"),
-				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-					":value": {B: buf},
-				},
-				ExpressionAttributeNames: map[string]*string{
-					"#a": aws.String("content"),
-				},
-			}); err != nil {
-				logrus.Errorf("hotBitmapsUpdater store error, key: %s.%s: %v", nsid, ts, err)
-			}
-		}(b.nsid, b.ts)
-	}
-	wg.Wait()
+	logrus.Infof("hotBitmapsUpdater payloads: %d total, %d fails, %d bytes",
+		len(pendings), fails, sz)
 }
 
-// hash(ns + name) into 8 bits, 16 + 16
 func addBitmap(ns, token, id string) error {
-	idUnix, ok := clock.ParseStrUnixDeciDeci(id)
+	idUnix, ok := clock.ParseStrUnixDeci(id)
 	if !ok {
 		return fmt.Errorf("bitmap add %q: invalid timestamp format", id)
 	}
 
-	normalizedUnix := idUnix / bitmapTimeSpan * bitmapTimeSpan
-	partKey := genBitmapPartKey(ns, token)
-	unixStr := fmt.Sprintf("%016x", normalizedUnix)
-	key := partKey + unixStr
+	day := idUnix / bitmap.Size * bitmap.Size
+	unixStr := fmt.Sprintf("%016x", day)
+	key := ns + unixStr
 
 	cached, ok := bm.hot.Load(key)
 	if !ok {
 		loaded, err, _ := bm.loader.Do(key, func() (interface{}, error) {
-			v, err := dalGetBitmap(partKey, unixStr)
+			v, err := dalGetBitmap(ns, unixStr)
 			if v == nil && err == nil {
-				v = &bitmap{
-					Bitmap: roaring.NewBitmap(),
-					nsid:   partKey,
-					ts:     unixStr,
+				v = &NSBitmap{
+					Day:     bitmap.New(day),
+					ns:      ns,
+					unixStr: unixStr,
 				}
 			}
 			return v, err
@@ -139,35 +93,30 @@ func addBitmap(ns, token, id string) error {
 		bm.hot.Store(key, loaded)
 	}
 
-	m, _ := cached.(*bitmap)
-	diff := idUnix - normalizedUnix
-	m.Lock()
-	if m.CheckedAdd((types.StrHash(token)&0xffff)<<16 | uint32(diff)) {
-		m.dirty = true
-	}
-	buf, _ := m.MarshalBinary()
-	m.Unlock()
+	m, _ := cached.(*NSBitmap)
+	m.Add(idUnix, types.StrHash(token))
 
-	if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
-		TableName: &tableFTS,
-		Key: map[string]*dynamodb.AttributeValue{
-			"nsid": {S: aws.String(partKey)},
-			"ts":   {S: aws.String(unixStr)},
-		},
-		UpdateExpression: aws.String("set #a = :value"),
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":value": {B: buf},
-		},
-		ExpressionAttributeNames: map[string]*string{
-			"#a": aws.String("content"),
-		},
-	}); err != nil {
-		logrus.Errorf("hotBitmapsUpdater store error, key: %s.%s: %v", partKey, unixStr, err)
-	}
-	return nil //dalPutBitmap(partKey, unixStr, m)
+	// if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
+	// 	TableName: &tableFTS,
+	// 	Key: map[string]*dynamodb.AttributeValue{
+	// 		"nsid": {S: aws.String(partKey)},
+	// 		"ts":   {S: aws.String(unixStr)},
+	// 	},
+	// 	UpdateExpression: aws.String("set #a = :value"),
+	// 	ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+	// 		":value": {B: buf},
+	// 	},
+	// 	ExpressionAttributeNames: map[string]*string{
+	// 		"#a": aws.String("content"),
+	// 	},
+	// }); err != nil {
+	// 	logrus.Errorf("hotBitmapsUpdater store error, key: %s.%s: %v", partKey, unixStr, err)
+	// }
+	// zzz.Store(ns+unixStr, m)
+	return nil
 }
 
-func accessBitmapReadonly(partKey string, unix int64, f func(*bitmap)) error {
+func accessBitmapReadonly(partKey string, unix int64, f func(*NSBitmap)) error {
 	unixStr := fmt.Sprintf("%016x", unix)
 	cacheKey := partKey + unixStr
 	cached, ok := bm.hot.Load(cacheKey)
@@ -189,154 +138,137 @@ func accessBitmapReadonly(partKey string, unix int64, f func(*bitmap)) error {
 			f(nil)
 			return nil
 		}
-		cached, _ = loaded.(*bitmap)
+		cached = loaded
 		bm.cache.Add(cacheKey, cached)
 	}
-	b := cached.(*bitmap)
-	b.RLock()
-	defer b.RUnlock()
-	f(b)
+	f(cached.(*NSBitmap))
 	return nil
 }
 
 func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f func(int64) bool) error {
 	rawStart := start
-	start = start / bitmapTimeSpan * bitmapTimeSpan
-	end = end / bitmapTimeSpan * bitmapTimeSpan
+	start = start / bitmap.Size * bitmap.Size
+	end = end / bitmap.Size * bitmap.Size
 	if start < end {
 		return nil
 	}
 
-	var final *roaring.Bitmap
-	var fmu sync.Mutex
-	var dict = roaring.New()
-
-	var wg sync.WaitGroup
+	var hashes, hashes2 []uint32
 	for _, token := range includes {
-		wg.Add(1)
-		go accessBitmapReadonly(genBitmapPartKey(ns, token), start, func(b *bitmap) {
-			defer wg.Done()
-			if b == nil {
-				return
-			}
-			fmu.Lock()
-			if final == nil {
-				final = b.Clone()
-			} else {
-				final.Or(b.Bitmap)
-			}
-			fmu.Unlock()
-		})
-		dict.Add(types.StrHash(token) & 0xffff)
+		hashes = append(hashes, types.StrHash(token))
 	}
-	wg.Wait()
+	for _, token := range excludes {
+		hashes2 = append(hashes2, types.StrHash(token))
+	}
+
+	var final *bitmap.JoinedResult
+	accessBitmapReadonly(ns, start, func(b *NSBitmap) {
+		if b == nil {
+			return
+		}
+		fmt.Println(b)
+		final = b.Join(hashes)
+	})
 
 	if final == nil {
 		// No hits in current time block (start),
 		// so we will search for the nearest block among all tokens.
-		out := make([]int, len(includes))
-		for i, token := range includes {
-			wg.Add(1)
-			go func(i int, partKey string) {
-				defer wg.Done()
-				resp, _ := db.Query(&dynamodb.QueryInput{
-					TableName:              &tableFTS,
-					KeyConditionExpression: aws.String("nsid = :pk and #ts < :upper"),
-					ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-						":pk":    {S: aws.String(partKey)},
-						":upper": {S: aws.String(fmt.Sprintf("%016x", start))},
-					},
-					ExpressionAttributeNames: map[string]*string{
-						"#ts": aws.String("ts"),
-					},
-					ScanIndexForward: aws.Bool(false),
-					Limit:            aws.Int64(1),
-				})
-				if resp != nil && len(resp.Items) == 1 {
-					ts, _ := strconv.ParseInt(strings.TrimLeft(*resp.Items[0]["ts"].S, "0"), 16, 64)
-					out[i] = int(ts)
-				}
-			}(i, genBitmapPartKey(ns, token))
-		}
-		wg.Wait()
-		sort.Ints(out)
-		if last := out[len(out)-1]; last > 0 {
-			return mergeBitmaps(ns, includes, excludes, int64(last)+bitmapTimeSpan-1, end, f)
-		}
+		// out := make([]int, len(includes))
+		// for i, token := range includes {
+		// 	wg.Add(1)
+		// 	go func(i int, partKey string) {
+		// 		defer wg.Done()
+		// 		resp, _ := db.Query(&dynamodb.QueryInput{
+		// 			TableName:              &tableFTS,
+		// 			KeyConditionExpression: aws.String("nsid = :pk and #ts < :upper"),
+		// 			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+		// 				":pk":    {S: aws.String(partKey)},
+		// 				":upper": {S: aws.String(fmt.Sprintf("%016x", start))},
+		// 			},
+		// 			ExpressionAttributeNames: map[string]*string{
+		// 				"#ts": aws.String("ts"),
+		// 			},
+		// 			ScanIndexForward: aws.Bool(false),
+		// 			Limit:            aws.Int64(1),
+		// 		})
+		// 		if resp != nil && len(resp.Items) == 1 {
+		// 			ts, _ := strconv.ParseInt(strings.TrimLeft(*resp.Items[0]["ts"].S, "0"), 16, 64)
+		// 			out[i] = int(ts)
+		// 		}
+		// 	}(i, genBitmapPartKey(ns, token))
+		// }
+		// wg.Wait()
+		// sort.Ints(out)
+		// if last := out[len(out)-1]; last > 0 {
+		// 	return mergeBitmaps(ns, includes, excludes, int64(last)+bitmapTimeSpan-1, end, f)
+		// }
 		return nil
 	}
 
-	for _, name := range excludes {
-		accessBitmapReadonly(genBitmapPartKey(ns, name), start, func(b *bitmap) {
+	if len(hashes2) > 0 {
+		accessBitmapReadonly(ns, start, func(b *NSBitmap) {
 			if b == nil {
 				return
 			}
-			final.AndNot(b.Bitmap)
+			final.Subtract(b.Join(hashes2))
 		})
 	}
 
-	iter := final.ReverseIterator()
-	tsDedup := roaring.New()
-	for iter.HasNext() {
-		tmp := iter.Next()
-		offset := tmp & 0xffff
-		ts := int64(offset) + start
-		if !dict.Contains(tmp >> 16) {
-			continue
+	final.Iterate(func(ts int64, scores int) bool {
+		if scores < len(hashes)/2 {
+			return true
 		}
 		if ts > rawStart {
-			continue
+			return true
 		}
-		if tsDedup.Contains(offset) {
-			continue
-		}
-		if !f(ts) {
-			return nil
-		}
-		tsDedup.Add(offset)
-	}
+		return f(ts)
+	})
 	return mergeBitmaps(ns, includes, excludes, start-1, end, f)
 }
 
-func genBitmapPartKey(ns, token string) string {
-	return fmt.Sprintf("%s#%02x", ns, (types.StrHash(token)>>8)&0xff)
-}
-
-func dalGetBitmap(nsid, unix string) (*bitmap, error) {
-	// v, ok := zzz.Load(nsid + unix)
+func dalGetBitmap(ns, unixStr string) (*NSBitmap, error) {
+	buf, err := ioutil.ReadFile("bitmap_cache/" + ns + unixStr)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	b, err := bitmap.UnmarshalBinary(buf)
+	if err != nil {
+		return nil, err
+	}
+	return &NSBitmap{
+		Day:     b,
+		ns:      ns,
+		unixStr: unixStr,
+	}, nil
+	// v, ok := zzz.Load(ns + unixStr)
 	// if !ok {
 	// 	return nil, nil
 	// }
+	// return v.(*bitmap.Day), nil // bitmap.UnmarshalBinary(v.([]byte))
+	// resp, err := db.GetItem(&dynamodb.GetItemInput{
+	// 	TableName: &tableFTS,
+	// 	Key: map[string]*dynamodb.AttributeValue{
+	// 		"nsid": {S: aws.String(nsid)},
+	// 	},
+	// })
+	// if err != nil {
+	// 	return nil, fmt.Errorf("dal get bitmap: store error: %v", err)
+	// }
+
+	// v := resp.Item["content"]
+	// if v == nil || len(v.B) == 0 {
+	// 	return nil, nil
+	// }
 	// m := roaring.New()
-	// if err := m.UnmarshalBinary(v.([]byte)); err != nil {
+	// if err := m.UnmarshalBinary(v.B); err != nil {
 	// 	return nil, err
 	// }
 	// return &bitmap{
 	// 	Bitmap: m,
-	// 	key:    nsid,
+	// 	nsid:   nsid,
+	// 	ts:     unix,
 	// }, nil
-	resp, err := db.GetItem(&dynamodb.GetItemInput{
-		TableName: &tableFTS,
-		Key: map[string]*dynamodb.AttributeValue{
-			"nsid": {S: aws.String(nsid)},
-			"ts":   {S: aws.String(unix)},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dal get bitmap: store error: %v", err)
-	}
-
-	v := resp.Item["content"]
-	if v == nil || len(v.B) == 0 {
-		return nil, nil
-	}
-	m := roaring.New()
-	if err := m.UnmarshalBinary(v.B); err != nil {
-		return nil, err
-	}
-	return &bitmap{
-		Bitmap: m,
-		nsid:   nsid,
-		ts:     unix,
-	}, nil
 }

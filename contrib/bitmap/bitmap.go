@@ -15,6 +15,8 @@ import (
 const (
 	hour10 = 3600 * 10
 	day10  = 86400 * 10
+
+	Size = day10
 )
 
 var andTable [hour10]*roaring.Bitmap
@@ -95,9 +97,10 @@ func (b *hourMap) add(ts int64, v uint32) bool {
 	return b.fwd.CheckedAdd(h)
 }
 
-func (b *Day) Join(vs []uint32) (res JoinedResult) {
+func (b *Day) Join(vs []uint32) (res *JoinedResult) {
+	res = &JoinedResult{}
 	for i := 23; i >= 0; i-- {
-		b.hours[i].join(vs, i, &res)
+		b.hours[i].join(vs, i, res)
 	}
 	return
 }
@@ -313,13 +316,35 @@ type JoinedResult struct {
 	}
 }
 
-func (br JoinedResult) Iterate(f func(ts int64, scores int) bool) {
+func (br *JoinedResult) ToBitmapArray() (res [24]*roaring.Bitmap) {
+	for i, v := range br.hours {
+		res[i] = v.m
+	}
+	return
+}
+
+func (br *JoinedResult) Iterate(f func(ts int64, scores int) bool) {
 	for i := 23; i >= 0; i-- {
 		iter := br.hours[i].m.ReverseIterator()
 		for iter.HasNext() {
 			v := iter.Next()
 			if !f(br.hours[i].baseTime+int64(v), int(br.hours[i].scores[v])) {
 				break
+			}
+		}
+	}
+}
+
+func (r *JoinedResult) Subtract(r2 *JoinedResult) {
+	for i := 23; i >= 0; i-- {
+		x := &r.hours[i]
+		if x.baseTime != r2.hours[i].baseTime {
+			panic("JoinedResult.Subtract: unmatched base time")
+		}
+		x.m.AndNot(r2.hours[i].m)
+		for k := range x.scores {
+			if !x.m.Contains(k) {
+				delete(x.scores, k)
 			}
 		}
 	}

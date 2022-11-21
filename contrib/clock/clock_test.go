@@ -12,13 +12,13 @@ func TestClockId(t *testing.T) {
 	}
 	s := IdStr()
 	fmt.Println(s)
-	fmt.Println(ParseStrUnixDeciDeci(s))
+	fmt.Println(ParseStrUnixDeci(s))
 }
 
 func BenchmarkParseId(b *testing.B) {
 	id := IdStr()
 	for i := 0; i < b.N; i++ {
-		_, ok := ParseStrUnixDeciDeci(id)
+		_, ok := ParseStrUnixDeci(id)
 		if !ok {
 			b.FailNow()
 		}

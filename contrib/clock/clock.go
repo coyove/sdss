@@ -30,8 +30,9 @@ var (
 )
 
 const (
-	serverIdMask = 0x3fffffff
+	serverIdMask = 0xfffffff
 	maxCounter   = 0x3fff
+	tsBits       = 28
 	tsOffset     = 16666666666
 	encodeTable  = "-.0123456789_abcdefghijklmnopqrstuvwxyz~"
 	// (2^64 - 40^12) / 2^64 = 0.1
@@ -79,7 +80,7 @@ func Id() (id uint64) {
 	if idCounter >= maxCounter {
 		panic("too many IDs generated in 1ms")
 	}
-	id = uint64(sec)<<30 | serverId | uint64(idCounter)
+	id = uint64(sec)<<tsBits | serverId | uint64(idCounter)
 	return
 }
 
@@ -98,11 +99,11 @@ func base40Encode(id uint64) string {
 }
 
 func UnixDeciToIdStr(m int64) string {
-	return base40Encode(uint64(m-tsOffset) << 30)
+	return base40Encode(uint64(m-tsOffset) << tsBits)
 }
 
 func ParseUnixDeci(id uint64) int64 {
-	return int64(id>>30) + tsOffset
+	return int64(id>>tsBits) + tsOffset
 }
 
 func ParseStrUnixDeci(idstr string) (int64, bool) {

@@ -13,32 +13,32 @@ import (
 
 var cm struct {
 	mu sync.Mutex
-	m  map[string]string
+	m  map[string]*types.Document
 }
 
 func addDoc(doc *types.Document) error {
-	// cm.mu.Lock()
-	// if cm.m == nil {
-	// 	cm.m = map[string]string{}
-	// }
-	// cm.m[id] = content
-	// cm.mu.Unlock()
-	if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
-		TableName: &tableFTS,
-		Key: map[string]*dynamodb.AttributeValue{
-			"nsid": {S: aws.String("doc")},
-			"ts":   {S: aws.String(doc.Id)},
-		},
-		UpdateExpression: aws.String("set #a = :value"),
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":value": {B: doc.MarshalBinary()},
-		},
-		ExpressionAttributeNames: map[string]*string{
-			"#a": aws.String("content"),
-		},
-	}); err != nil {
-		return fmt.Errorf("dal put document: store error: %v", err)
+	cm.mu.Lock()
+	if cm.m == nil {
+		cm.m = map[string]*types.Document{}
 	}
+	cm.m[doc.Id] = doc
+	cm.mu.Unlock()
+	// if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
+	// 	TableName: &tableFTS,
+	// 	Key: map[string]*dynamodb.AttributeValue{
+	// 		"nsid": {S: aws.String("doc")},
+	// 		"ts":   {S: aws.String(doc.Id)},
+	// 	},
+	// 	UpdateExpression: aws.String("set #a = :value"),
+	// 	ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+	// 		":value": {B: doc.MarshalBinary()},
+	// 	},
+	// 	ExpressionAttributeNames: map[string]*string{
+	// 		"#a": aws.String("content"),
+	// 	},
+	// }); err != nil {
+	// 	return fmt.Errorf("dal put document: store error: %v", err)
+	// }
 	return nil
 }
 
@@ -67,31 +67,37 @@ func getDoc(id string) (doc *types.Document, err error) {
 
 func scanDoc(unix int64) (docs []*types.Document, err error) {
 	lower := clock.UnixDeciToIdStr(unix)
-	run := func(upper string) {
-		resp, err := db.Query(&dynamodb.QueryInput{
-			TableName:              &tableFTS,
-			KeyConditionExpression: aws.String("nsid = :pk and #ts between :lower and :upper"),
-			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-				":pk":    {S: aws.String("doc")},
-				":lower": {S: aws.String(lower)},
-				":upper": {S: aws.String(upper)},
-			},
-			ExpressionAttributeNames: map[string]*string{
-				"#ts": aws.String("ts"),
-			},
-			ScanIndexForward: aws.Bool(false),
-		})
-		if err != nil {
-			err = fmt.Errorf("dal scan document: store error: %v", err)
-			return
-		}
-		for _, item := range resp.Items {
-			doc := &types.Document{}
-			json.Unmarshal(item["content"].B, doc)
+	upper := clock.UnixDeciToIdStr(unix + 1)
+	for id, doc := range cm.m {
+		if id >= lower && id < upper {
 			docs = append(docs, doc)
 		}
 	}
-	run(clock.UnixDeciToIdStr(unix + 1))
+	// run := func(upper string) {
+	// 	resp, err := db.Query(&dynamodb.QueryInput{
+	// 		TableName:              &tableFTS,
+	// 		KeyConditionExpression: aws.String("nsid = :pk and #ts between :lower and :upper"),
+	// 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+	// 			":pk":    {S: aws.String("doc")},
+	// 			":lower": {S: aws.String(lower)},
+	// 			":upper": {S: aws.String(upper)},
+	// 		},
+	// 		ExpressionAttributeNames: map[string]*string{
+	// 			"#ts": aws.String("ts"),
+	// 		},
+	// 		ScanIndexForward: aws.Bool(false),
+	// 	})
+	// 	if err != nil {
+	// 		err = fmt.Errorf("dal scan document: store error: %v", err)
+	// 		return
+	// 	}
+	// 	for _, item := range resp.Items {
+	// 		doc := &types.Document{}
+	// 		json.Unmarshal(item["content"].B, doc)
+	// 		docs = append(docs, doc)
+	// 	}
+	// }
+	// run(clock.UnixDeciToIdStr(unix + 1))
 	return
 }
 

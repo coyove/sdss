@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/dal"
@@ -15,10 +16,11 @@ import (
 func main() {
 	runtime.GOMAXPROCS(2)
 	types.LoadConfig("config.json")
-	dal.InitDB()
+	// dal.InitDB()
 
 	if true {
 		f, err := os.Open(os.Getenv("HOME") + "/Downloads/a.txt")
+		// f, err := os.Open(os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv")
 		if err != nil {
 			panic(err)
 		}
@@ -41,23 +43,26 @@ func main() {
 				Content: line,
 			}
 			dal.IndexContent([]string{"a"}, doc)
-			if ln%1 == 0 {
-				fmt.Println("index", ln, doc.Id, doc.CreateTime(), line)
+			if ln%100 == 0 {
+				fmt.Println("index", ln, doc.Id) // , doc.CreateTime(), line)
 			}
-			if ln > 30 {
+			if ln > 3000 {
 				break
 			}
+			time.Sleep(time.Millisecond * 50)
 		}
 	}
 
 	c := &dal.SearchCursor{
-		Query:   "娃娃",
+		Query:   "学校学生",
+		Exclude: "社团",
 		Start:   clock.IdStr(),
-		EndUnix: clock.Unix() - 600,
+		EndUnix: clock.UnixDeci() - 6000,
 		Count:   5,
 	}
 	for !c.Exhausted {
 		dal.SearchContent("a", c)
+		break
 	}
 
 }
