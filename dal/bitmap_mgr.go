@@ -52,7 +52,7 @@ func hotBitmapsUpdater() {
 	var pendings []*bitmap
 	var toDeletes []string
 	var total int
-	var deletePivot = clock.UnixToIdStr(clock.Unix() - bitmapTimeSpan*2)
+	var deletePivot = clock.UnixDeciToIdStr(clock.Unix() - bitmapTimeSpan*2)
 
 	bm.hot.Range(func(k, v interface{}) bool {
 		b := v.(*bitmap)
@@ -109,7 +109,7 @@ func hotBitmapsUpdater() {
 
 // hash(ns + name) into 8 bits, 16 + 16
 func addBitmap(ns, token, id string) error {
-	idUnix, ok := clock.ParseStrUnix(id)
+	idUnix, ok := clock.ParseStrUnixDeciDeci(id)
 	if !ok {
 		return fmt.Errorf("bitmap add %q: invalid timestamp format", id)
 	}

@@ -94,7 +94,7 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 		includes = append(includes, k)
 	}
 
-	start, ok := clock.ParseStrUnix(cursor.Start)
+	start, ok := clock.ParseStrUnixDeciDeci(cursor.Start)
 	if !ok {
 		return nil, fmt.Errorf("invalid cursor start: %q", cursor.Start)
 	}

@@ -66,7 +66,7 @@ func getDoc(id string) (doc *types.Document, err error) {
 }
 
 func scanDoc(unix int64) (docs []*types.Document, err error) {
-	lower := clock.UnixToIdStr(unix)
+	lower := clock.UnixDeciToIdStr(unix)
 	run := func(upper string) {
 		resp, err := db.Query(&dynamodb.QueryInput{
 			TableName:              &tableFTS,
@@ -91,7 +91,7 @@ func scanDoc(unix int64) (docs []*types.Document, err error) {
 			docs = append(docs, doc)
 		}
 	}
-	run(clock.UnixToIdStr(unix + 1))
+	run(clock.UnixDeciToIdStr(unix + 1))
 	return
 }
 

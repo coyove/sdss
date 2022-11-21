@@ -17,7 +17,7 @@ import (
 )
 
 func TestBitmap2(t *testing.T) {
-	now := clock.Unix() / halfday * halfday
+	now := clock.UnixDeci() / day10 * day10
 	rand.Seed(now)
 	b := New(now)
 
@@ -37,14 +37,14 @@ func TestBitmap2(t *testing.T) {
 			break
 		}
 
-		if i < 1e6 {
+		if i < 1000000 {
 			continue
 		}
 
 		line := strings.Join(records, " ")
 		for k := range ngram.Split(string(line)) {
 			h := types.StrHash(k)
-			b.Add(clock.Unix(), uint8(i), h)
+			b.Add(clock.UnixDeci(), h)
 		}
 
 		if i%1000 == 0 {
@@ -52,19 +52,20 @@ func TestBitmap2(t *testing.T) {
 			time.Sleep(time.Millisecond * 200)
 		}
 	}
-	x := b.MarshalBinary(clock.Unix())
+
+	x := b.MarshalBinary()
 	fmt.Println(len(x), b)
 
 	ioutil.WriteFile("cache", x, 0777)
 
 	start := clock.Now()
 	var q []uint32
-	for k := range ngram.Split("breadcrumb") {
+	for k := range ngram.Split("function dictionary") {
 		q = append(q, types.StrHash(k))
 	}
-	b.Join(q).Iterate(func(ts int64, tag, s int) bool {
+	b.Join(q).Iterate(func(ts int64, s int) bool {
 		if int(s) == len(q) {
-			// fmt.Println(ts, tag)
+			fmt.Println(ts)
 		}
 		return true
 	})
@@ -72,49 +73,43 @@ func TestBitmap2(t *testing.T) {
 }
 
 func TestBitmap(t *testing.T) {
-	now := clock.Unix() / halfday * halfday
+	now := clock.UnixDeci() / day10 * day10
 	rand.Seed(now)
 	b := New(now)
 
-	var xx []uint32
-	var tmp []uint32
-	for t := 0; t < halfday; t++ {
-		N := 1000
-		big := false
-		if rand.Intn(5) == 0 {
-			N = 10000
-			big = true
+	ctr := 0
+	var store []uint32
+	for t := 0; t < day10; t += rand.Intn(5) + 1 {
+		N := 100
+		if rand.Intn(150) == 0 {
+			N = 2000
 		}
 		for i := 0; i < N; i++ {
 			v := rand.Uint32()
-			b.Add(now+int64(t), uint8(i), v)
-			xx = append(xx, v)
-			if big {
-				tmp = append(tmp, v)
-			}
+			b.Add(now+int64(t), v)
+			ctr++
+			store = append(store, v)
+		}
+		if t%2000 == 0 {
+			fmt.Println(t)
 		}
 	}
 
 	start := clock.Now()
-	x := b.MarshalBinary(now + 10000)
-	fmt.Println(len(x), time.Since(start), b)
+	x := b.MarshalBinary()
+	fmt.Println(len(x), time.Since(start))
 
 	b, _ = UnmarshalBinary(x)
+	fmt.Println(b, ctr)
 
-	for t := 10000; t < 15000; t++ {
-		for i := 0; i < 10000; i++ {
-			v := rand.Uint32()
-			b.Add(now+int64(t), uint8(i), v)
+	{
+		var k uint32
+		for k = range b.hours[0].hashIdx {
+			break
 		}
+		b.Join([]uint32{k}).Iterate(func(ts int64, scores int) bool {
+			// fmt.Println(ts, scores)
+			return true
+		})
 	}
-
-	start = clock.Now()
-	x = b.MarshalBinary(now + 20000)
-	fmt.Println(len(x), time.Since(start), b)
-
-	start = clock.Now()
-	x = b.MarshalBinary(now + halfday)
-	fmt.Println(len(x), time.Since(start), b)
-
-	b, _ = UnmarshalBinary(x)
 }

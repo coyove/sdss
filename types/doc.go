@@ -23,7 +23,7 @@ func (doc *Document) MarshalBinary() []byte {
 }
 
 func (doc *Document) CreateTime() int64 {
-	ts, _ := clock.ParseStrUnix(doc.Id)
+	ts, _ := clock.ParseStrUnixDeci(doc.Id)
 	return ts
 }
 
