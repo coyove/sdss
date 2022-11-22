@@ -103,7 +103,7 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 	}
 
 	cursor.Exhausted = true
-	var docTotal, docHits float64
+	var tsTotal, tsHits, docTotal, docHits float64
 	mergeBitmaps(ns, includes, excludes, start, cursor.EndUnix, func(ts int64) bool {
 		docs, err0 := scanDoc(ts)
 		if err != nil {
@@ -111,8 +111,11 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 			return false
 		}
 
-		fmt.Println("cand", ts, len(docs))
+		// fmt.Println("cand", ts, len(docs))
 		docTotal += float64(len(docs))
+		tsTotal += 1
+
+		found := false
 		for _, doc := range docs {
 			if doc.Id > cursor.Start {
 				continue
@@ -124,15 +127,21 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 					score++
 				}
 			}
-			fmt.Println("===", doc.Id, score)
+
 			// fmt.Println(ts, doc, score, len(includes), includes)
 			if score >= float64(len(includes))/2 {
 				docHits++
 				res = append(res, &SearchDocument{
 					Document: *doc,
 				})
+				found = true
 			}
 		}
+
+		if found {
+			tsHits++
+		}
+
 		if len(res) > cursor.Count {
 			last := res[len(res)-1]
 			res = res[:len(res)-1]
@@ -144,14 +153,14 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 	})
 
 	cursor.FalseRate = 0
-	if docTotal > 0 {
-		cursor.FalseRate = docHits / docTotal
+	if tsTotal > 0 {
+		cursor.FalseRate = tsHits / tsTotal
 	}
 
 	for i, res := range res {
 		fmt.Printf("%02d %s\n", i, res)
 	}
-	fmt.Println(cursor.FalseRate, docHits, docTotal)
+	fmt.Println(cursor.FalseRate, tsHits, tsTotal, docHits, docTotal)
 	return
 }
 

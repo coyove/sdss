@@ -18,9 +18,9 @@ func main() {
 	types.LoadConfig("config.json")
 	// dal.InitDB()
 
-	if true {
-		f, err := os.Open(os.Getenv("HOME") + "/Downloads/a.txt")
-		// f, err := os.Open(os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv")
+	if false {
+		// f, err := os.Open(os.Getenv("HOME") + "/Downloads/a.txt")
+		f, err := os.Open(os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv")
 		if err != nil {
 			panic(err)
 		}
@@ -54,8 +54,7 @@ func main() {
 	}
 
 	c := &dal.SearchCursor{
-		Query:   "学校学生",
-		Exclude: "社团",
+		Query:   "egg tomato",
 		Start:   clock.IdStr(),
 		EndUnix: clock.UnixDeci() - 6000,
 		Count:   5,
