@@ -86,11 +86,11 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 
 	offset := uint32(ts - b.baseTime)
 
-	if len(b.keys) > 0 {
-		if key <= b.keys[len(b.keys)-1] {
-			panic(fmt.Sprintf("invalid key: %016x, last key: %016x", key, b.keys[len(b.keys)-1]))
-		}
-		if uint16(offset) < b.maps[len(b.keys)-1] {
+	if len(b.maps) > 0 {
+		// if key <= b.keys[len(b.keys)-1] {
+		// 	panic(fmt.Sprintf("invalid key: %016x, last key: %016x", key, b.keys[len(b.keys)-1]))
+		// }
+		if uint16(offset) < b.maps[len(b.maps)-1] {
 			panic(fmt.Sprintf("invalid timestamp: %d, last: %d", offset, b.maps[len(b.keys)-1]))
 		}
 	}
