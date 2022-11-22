@@ -18,20 +18,9 @@ import (
 )
 
 var (
-	db            *dynamodb.DynamoDB
-	addBitmapChan = make(chan *types.DocumentToken, 1024)
-	tableFTS      = "fts"
+	db       *dynamodb.DynamoDB
+	tableFTS = "fts"
 )
-
-func init() {
-	for i := 0; i < 10; i++ {
-		go func() {
-			for dt := range addBitmapChan {
-				dt.OutError <- addBitmap(dt.Namespace, dt.Token, dt.Id)
-			}
-		}()
-	}
-}
 
 func InitDB() {
 	ddb := types.Config.DynamoDB
@@ -65,27 +54,12 @@ func IndexContent(nss []string, doc *types.Document) error {
 		return err
 	}
 
-	var out = make(chan error, 1)
-	var n = 0
 	for _, ns := range nss {
-		for token := range tokens {
-			doc := &types.DocumentToken{
-				Namespace: ns,
-				Token:     token,
-				Id:        doc.Id,
-				OutError:  out,
-			}
-			addBitmapChan <- doc
-			n++
+		if err := addBitmap(ns, doc.Id, tokens); err != nil {
+			return err
 		}
 	}
-	var lastErr error
-	for i := 0; i < n; i++ {
-		if err := <-out; err != nil {
-			lastErr = err
-		}
-	}
-	return lastErr
+	return nil
 }
 
 func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err error) {
@@ -97,29 +71,32 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 		excludes = append(excludes, k)
 	}
 
-	start, ok := clock.ParseStrUnixDeci(cursor.Start)
+	start, ok := clock.ParseIdStrUnix(cursor.Start)
 	if !ok {
 		return nil, fmt.Errorf("invalid cursor start: %q", cursor.Start)
 	}
 
 	cursor.Exhausted = true
-	var tsTotal, tsHits, docTotal, docHits float64
-	mergeBitmaps(ns, includes, excludes, start, cursor.EndUnix, func(ts int64) bool {
-		docs, err0 := scanDoc(ts)
+	var docTotal, docHits float64
+	mergeBitmaps(ns, includes, start, cursor.EndUnix, func(ids []string) bool {
+		docs, err0 := getDoc(ids)
 		if err != nil {
 			err = err0
 			return false
 		}
 
-		// fmt.Println("cand", ts, len(docs))
-		docTotal += float64(len(docs))
-		tsTotal += 1
-
-		found := false
 		for _, doc := range docs {
+			if doc == nil {
+				continue
+			}
+
+			// fmt.Println("cand", ts, len(docs))
+			docTotal++
+
 			if doc.Id > cursor.Start {
 				continue
 			}
+
 			content := doc.Content
 			score := 0.0
 			for _, name := range includes {
@@ -134,33 +111,28 @@ func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err 
 				res = append(res, &SearchDocument{
 					Document: *doc,
 				})
-				found = true
 			}
-		}
 
-		if found {
-			tsHits++
-		}
-
-		if len(res) > cursor.Count {
-			last := res[len(res)-1]
-			res = res[:len(res)-1]
-			cursor.Start = last.Id
-			cursor.Exhausted = false
-			return false
+			if len(res) > cursor.Count {
+				last := res[len(res)-1]
+				res = res[:len(res)-1]
+				cursor.Start = last.Id
+				cursor.Exhausted = false
+				return false
+			}
 		}
 		return true
 	})
 
 	cursor.FalseRate = 0
-	if tsTotal > 0 {
-		cursor.FalseRate = tsHits / tsTotal
+	if docTotal > 0 {
+		cursor.FalseRate = docHits / docTotal
 	}
 
 	for i, res := range res {
 		fmt.Printf("%02d %s\n", i, res)
 	}
-	fmt.Println(cursor.FalseRate, tsHits, tsTotal, docHits, docTotal)
+	fmt.Println(cursor.FalseRate, docHits, docTotal, docHits, docTotal)
 	return
 }
 

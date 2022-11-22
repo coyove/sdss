@@ -8,7 +8,7 @@ import (
 func TestClockId(t *testing.T) {
 	fmt.Println(Unix())
 	for i := 0; i < 10; i++ {
-		fmt.Println(Id(), ParseUnixDeci(Id()), IdStr())
+		fmt.Println(Id(), ParseIdUnixDeci(Id()), IdStr())
 	}
 	s := IdStr()
 	fmt.Println(s)

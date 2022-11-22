@@ -26,8 +26,8 @@ func Split(text string) (res map[string]float64) {
 			lastr, _ := utf8.DecodeLastRuneInString(lastSplitText)
 			if (lastr <= utf8.RuneSelf) != (r <= utf8.RuneSelf) {
 				tmpbuf.Reset()
-				tmpbuf.WriteRune(lastr)
-				tmpbuf.WriteRune(r)
+				tmpbuf.WriteRune(cv(lastr))
+				tmpbuf.WriteRune(cv(r))
 				res[strings.ToLower(tmpbuf.String())]++
 				total++
 			}
@@ -39,7 +39,7 @@ func Split(text string) (res map[string]float64) {
 			if len(v) == 1 {
 				return
 			}
-			res[strings.ToLower(v)]++
+			res[lemma(v)]++
 			total++
 			return
 		}
@@ -52,8 +52,8 @@ func Split(text string) (res map[string]float64) {
 
 			if lastr != utf8.RuneError {
 				tmpbuf.Reset()
-				tmpbuf.WriteRune(lastr)
-				tmpbuf.WriteRune(r)
+				tmpbuf.WriteRune(cv(lastr))
+				tmpbuf.WriteRune(cv(r))
 				res[tmpbuf.String()]++
 				total++
 			}

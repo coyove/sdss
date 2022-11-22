@@ -49,14 +49,14 @@ func main() {
 			if ln > 3000 {
 				break
 			}
-			time.Sleep(time.Millisecond * 50)
+			time.Sleep(time.Millisecond * 10)
 		}
 	}
 
 	c := &dal.SearchCursor{
 		Query:   "egg tomato",
 		Start:   clock.IdStr(),
-		EndUnix: clock.UnixDeci() - 6000,
+		EndUnix: clock.Unix() - 600,
 		Count:   5,
 	}
 	for !c.Exhausted {

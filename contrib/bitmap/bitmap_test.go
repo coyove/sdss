@@ -1,12 +1,14 @@
 package bitmap
 
 import (
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +18,33 @@ import (
 	"github.com/coyove/sdss/types"
 )
 
+func filterKTS(v []KeyTimeScore, minScore int) []KeyTimeScore {
+	for i := len(v) - 1; i >= 0; i-- {
+		if v[i].Score < minScore {
+			v = append(v[:i], v[i+1:]...)
+		}
+	}
+	return v
+}
+
+func lineOf(path string, ln int) string {
+	f, _ := os.Open(path)
+	defer f.Close()
+	rd := bufio.NewReader(f)
+	for i := 0; ; i++ {
+		line, err := rd.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if i == ln {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
 func TestBitmap2(t *testing.T) {
-	now := clock.UnixDeci() / day10 * day10
+	now := clock.Unix() / day * day
 	rand.Seed(now)
 	b := New(now)
 
@@ -27,66 +54,82 @@ func TestBitmap2(t *testing.T) {
 	}
 	fmt.Println(b)
 
-	f, _ := os.Open(os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv")
+	path := os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv"
+	f, _ := os.Open(path)
 	defer f.Close()
 
+	go func() {
+		for {
+			x := b.MarshalBinary()
+			ioutil.WriteFile("cache", x, 0777)
+			time.Sleep(time.Second * 10)
+		}
+	}()
+
 	rd := csv.NewReader(f)
-	for i := 0; false && i <= 2000000; i++ {
+	for i := 0; false && i < 100000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
 		}
 
-		if i < 1000000 {
+		if i < 0 {
 			continue
 		}
 
 		line := strings.Join(records, " ")
+		hs := []uint32{}
 		for k := range ngram.Split(string(line)) {
-			h := types.StrHash(k)
-			b.Add(clock.UnixDeci(), h)
+			hs = append(hs, types.StrHash(k))
 		}
+		b.Add(uint64(i), hs)
 
-		if i%1000 == 0 {
+		if i%100 == 0 {
 			log.Println(i)
-			time.Sleep(time.Millisecond * 200)
 		}
+		time.Sleep(time.Millisecond * 10)
 	}
 
 	x := b.MarshalBinary()
 	fmt.Println(len(x), b)
-
 	ioutil.WriteFile("cache", x, 0777)
 
 	start := clock.Now()
+	gs := ngram.Split("italian chicken egg")
 	var q []uint32
-	for k := range ngram.Split("function dictionary") {
+	for k := range gs {
 		q = append(q, types.StrHash(k))
 	}
-	b.Join(q).Iterate(func(ts int64, s int) bool {
-		if int(s) == len(q) {
-			fmt.Println(ts)
+	for _, res := range filterKTS(b.Join(q, 0, false), len(q)) {
+		line := lineOf(path, int(res.Key))
+		s := 0
+		for k := range gs {
+			if m, _ := regexp.MatchString("(?i)"+k, line); m {
+				s++
+			}
 		}
-		return true
-	})
+		if s == len(gs) {
+			fmt.Println(res, line)
+		}
+	}
 	fmt.Println(time.Since(start))
 }
 
 func TestBitmap(t *testing.T) {
-	now := clock.UnixDeci() / day10 * day10
+	now := clock.Unix() / day * day
 	rand.Seed(now)
 	b := New(now)
 
 	ctr := 0
 	var store []uint32
-	for t := 0; t < day10; t += rand.Intn(5) + 1 {
+	for t := 0; t < 86400*10; t += rand.Intn(5) + 1 {
 		N := 100
 		if rand.Intn(150) == 0 {
 			N = 2000
 		}
 		for i := 0; i < N; i++ {
 			v := rand.Uint32()
-			b.Add(now+int64(t), v)
+			b.addWithTime(uint64(t*100000+i), now+int64(t), []uint32{v})
 			ctr++
 			store = append(store, v)
 		}
@@ -107,9 +150,6 @@ func TestBitmap(t *testing.T) {
 		for k = range b.hours[0].hashIdx {
 			break
 		}
-		b.Join([]uint32{k}).Iterate(func(ts int64, scores int) bool {
-			// fmt.Println(ts, scores)
-			return true
-		})
+		fmt.Println(b.Join([]uint32{k}, 0, true))
 	}
 }

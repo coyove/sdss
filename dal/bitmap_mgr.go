@@ -15,6 +15,10 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+const (
+	mergeBatchSize = 16
+)
+
 var bm struct {
 	hot    sync.Map
 	cache  *lru.Cache
@@ -63,13 +67,13 @@ func hotBitmapsUpdater() {
 		len(pendings), fails, sz)
 }
 
-func addBitmap(ns, token, id string) error {
-	idUnix, ok := clock.ParseStrUnixDeci(id)
+func addBitmap(ns, id string, tokens map[string]float64) error {
+	idUnix, ok := clock.ParseIdStrUnix(id)
 	if !ok {
 		return fmt.Errorf("bitmap add %q: invalid timestamp format", id)
 	}
 
-	day := idUnix / bitmap.Size * bitmap.Size
+	day := idUnix / 86400 * 86400
 	unixStr := fmt.Sprintf("%016x", day)
 	key := ns + unixStr
 
@@ -94,7 +98,13 @@ func addBitmap(ns, token, id string) error {
 	}
 
 	m, _ := cached.(*NSBitmap)
-	m.Add(idUnix, types.StrHash(token))
+	var hashes []uint32
+	for tok := range tokens {
+		hashes = append(hashes, types.StrHash(tok))
+	}
+
+	id64, _ := clock.Base40Decode(id)
+	m.Add(id64, hashes)
 
 	// if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
 	// 	TableName: &tableFTS,
@@ -145,32 +155,29 @@ func accessBitmapReadonly(partKey string, unix int64, f func(*NSBitmap)) error {
 	return nil
 }
 
-func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f func(int64) bool) error {
+func mergeBitmaps(ns string, includes []string, start, end int64, f func([]string) bool) error {
 	rawStart := start
-	start = start / bitmap.Size * bitmap.Size
-	end = end / bitmap.Size * bitmap.Size
+	start = start / 86400 * 86400
+	end = end / 86400 * 86400
 	if start < end {
 		return nil
 	}
 
-	var hashes, hashes2 []uint32
+	var hashes []uint32
 	for _, token := range includes {
 		hashes = append(hashes, types.StrHash(token))
 	}
-	for _, token := range excludes {
-		hashes2 = append(hashes2, types.StrHash(token))
-	}
 
-	var final *bitmap.JoinedResult
+	var final []bitmap.KeyTimeScore
 	accessBitmapReadonly(ns, start, func(b *NSBitmap) {
 		if b == nil {
 			return
 		}
 		fmt.Println(b)
-		final = b.Join(hashes)
+		final = b.Join(hashes, 0, true)
 	})
 
-	if final == nil {
+	if len(final) == 0 {
 		// No hits in current time block (start),
 		// so we will search for the nearest block among all tokens.
 		// out := make([]int, len(includes))
@@ -205,25 +212,29 @@ func mergeBitmaps(ns string, includes, excludes []string, start, end int64, f fu
 		return nil
 	}
 
-	if len(hashes2) > 0 {
-		accessBitmapReadonly(ns, start, func(b *NSBitmap) {
-			if b == nil {
-				return
+	var ids []string
+	for _, p := range final {
+		if p.Score < len(hashes)/2 {
+			continue
+		}
+		if p.Time > rawStart {
+			continue
+		}
+		ids = append(ids, clock.Base40Encode(p.Key))
+		if len(ids) >= mergeBatchSize {
+			exit := f(ids)
+			ids = ids[:0]
+			if exit {
+				break
 			}
-			final.Subtract(b.Join(hashes2))
-		})
+		}
 	}
-
-	final.Iterate(func(ts int64, scores int) bool {
-		if scores < len(hashes)/2 {
-			return true
+	if len(ids) >= 0 {
+		if !f(ids) {
+			return nil
 		}
-		if ts > rawStart {
-			return true
-		}
-		return f(ts)
-	})
-	return mergeBitmaps(ns, includes, excludes, start-1, end, f)
+	}
+	return mergeBitmaps(ns, includes, start-1, end, f)
 }
 
 func dalGetBitmap(ns, unixStr string) (*NSBitmap, error) {

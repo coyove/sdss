@@ -5,18 +5,17 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math/bits"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
+	"github.com/coyove/sdss/contrib/clock"
 )
 
 const (
 	hour10 = 3600 * 10
-	day10  = 86400 * 10
-
-	Size = day10
+	day    = 86400
 )
 
 var andTable [hour10]*roaring.Bitmap
@@ -34,10 +33,7 @@ type Day struct {
 }
 
 func New(baseTime int64) *Day {
-	if baseTime < 1e10 {
-		panic("invalid base time, use decisecond")
-	}
-	d := &Day{baseTime: baseTime / day10 * day10}
+	d := &Day{baseTime: baseTime / day * day * 10}
 	for i := range d.hours {
 		d.hours[i] = newHourMap(d.baseTime + hour10*int64(i))
 	}
@@ -45,16 +41,21 @@ func New(baseTime int64) *Day {
 }
 
 func (b *Day) BaseTime() int64 {
-	return b.baseTime
+	return b.baseTime / 10
 }
 
 type hourMap struct {
 	mu       sync.RWMutex
-	baseTime int64
-	fwd      *roaring.Bitmap // 16 bits ts + 16 bits hash
-	back     *roaring.Bitmap // 16 bits hash idx + 16 bits ts
-	hashCtr  uint64
-	hashIdx  map[uint32]uint16
+	baseTime int64 // baseTime + 16 bits ts = final timestamp
+
+	fwd  *roaring.Bitmap // 16 bits ts + 16 bits hash
+	back *roaring.Bitmap // 16 bits hash idx + 16 bits ts
+
+	hashCtr uint64
+	hashIdx map[uint32]uint16
+
+	keys []uint64 // keys
+	maps []uint16 // key -> ts offset maps
 }
 
 func newHourMap(baseTime int64) *hourMap {
@@ -67,51 +68,85 @@ func newHourMap(baseTime int64) *hourMap {
 	return m
 }
 
-func (b *Day) Add(ts int64, v uint32) bool {
-	return b.hours[(ts-b.baseTime)/hour10].add(ts, v)
+func (b *Day) Add(key uint64, v []uint32) {
+	b.addWithTime(key, clock.UnixDeci(), v)
 }
 
-func (b *hourMap) add(ts int64, v uint32) bool {
+func (b *Day) addWithTime(key uint64, ts int64, v []uint32) {
+	b.hours[(ts-b.baseTime)/hour10].add(ts, key, v)
+}
+
+func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if ts-b.baseTime > hour10 || ts < b.baseTime {
 		panic(fmt.Sprintf("invalid timestamp: %v, base: %v", ts, b.baseTime))
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	offset := uint32(ts - b.baseTime)
-	if idx, ok := b.hashIdx[v]; ok {
-		return b.back.CheckedAdd(uint32(idx)<<16 | offset)
-	}
 
-	h := h16(offset, v)
-	if !b.fwd.Contains(h) {
-		if b.fwd.AndCardinality(andTable[offset]) > 1024 {
-			// Bitmap is too dense.
-			idx := uint16(b.hashCtr & 0xffff)
-			b.hashIdx[v] = idx
-			b.hashCtr++
-			return b.back.CheckedAdd(uint32(idx)<<16 | offset)
+	if len(b.keys) > 0 {
+		if key <= b.keys[len(b.keys)-1] {
+			panic(fmt.Sprintf("invalid key: %016x, last key: %016x", key, b.keys[len(b.keys)-1]))
+		}
+		if uint16(offset) < b.maps[len(b.keys)-1] {
+			panic(fmt.Sprintf("invalid timestamp: %d, last: %d", offset, b.maps[len(b.keys)-1]))
 		}
 	}
-	return b.fwd.CheckedAdd(h)
+
+	b.keys = append(b.keys, key)
+	b.maps = append(b.maps, uint16(offset))
+
+	for _, v := range vs {
+		if idx, ok := b.hashIdx[v]; ok {
+			b.back.Add(uint32(idx)<<16 | offset)
+			continue
+		}
+
+		h := h16(offset, v)
+		if !b.fwd.Contains(h) {
+			if b.fwd.AndCardinality(andTable[offset]) > 1024 {
+				// Bitmap is too dense.
+				idx := uint16(b.hashCtr & 0xffff)
+				b.hashIdx[v] = idx
+				b.hashCtr++
+				b.back.Add(uint32(idx)<<16 | offset)
+				continue
+			}
+		}
+		b.fwd.Add(h)
+	}
 }
 
-func (b *Day) Join(vs []uint32) (res *JoinedResult) {
-	res = &JoinedResult{}
+func (b *Day) Join(vs []uint32, n int, desc bool) (res []KeyTimeScore) {
 	for i := 23; i >= 0; i-- {
-		b.hours[i].join(vs, i, res)
+		b.hours[i].join(vs, i, &res)
+		if n > 0 && len(res) >= n {
+			break
+		}
 	}
+	sort.Slice(res, func(i, j int) bool {
+		if res[i].Time == res[j].Time {
+			if desc {
+				return res[i].Key > res[j].Key
+			}
+			return res[i].Key < res[j].Key
+		}
+		if desc {
+			return res[i].Time > res[j].Time
+		}
+		return res[i].Time < res[j].Time
+	})
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hr int, res *JoinedResult) {
+func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	res.hours[hr].m = roaring.New()
-	res.hours[hr].baseTime = b.baseTime
-	res.hours[hr].scores = map[uint32]int8{}
+	m := roaring.New()
+	scores := map[uint32]int{}
 
 	iter := b.fwd.Iterator()
 	for iter.HasNext() {
@@ -119,8 +154,8 @@ func (b *hourMap) join(vs []uint32, hr int, res *JoinedResult) {
 
 		for _, v := range vs {
 			if b.fwd.Contains(h16(offset, v)) {
-				res.hours[hr].m.Add(offset)
-				res.hours[hr].scores[offset]++
+				m.Add(offset)
+				scores[offset]++
 			}
 		}
 
@@ -137,10 +172,26 @@ func (b *hourMap) join(vs []uint32, hr int, res *JoinedResult) {
 					break
 				}
 				offset := v & 0xffff
-
-				res.hours[hr].m.Add(offset)
-				res.hours[hr].scores[offset]++
+				m.Add(offset)
+				scores[offset]++
 			}
+		}
+	}
+
+	for iter, i := m.Iterator(), 0; iter.HasNext(); {
+		offset := uint16(iter.Next())
+		for ; i < len(b.keys); i++ {
+			if b.maps[i] < offset {
+				continue
+			}
+			if b.maps[i] > offset {
+				break
+			}
+			*res = append(*res, KeyTimeScore{
+				Key:   b.keys[i],
+				Time:  (b.baseTime + int64(b.maps[i])) / 10,
+				Score: int(scores[uint32(offset)]),
+			})
 		}
 	}
 }
@@ -170,11 +221,6 @@ func UnmarshalBinary(p []byte) (*Day, error) {
 }
 
 func readHourMap(rd io.Reader) (*hourMap, error) {
-	// var ver byte
-	// if err := binary.Read(rd, binary.BigEndian, &ver); err != nil {
-	// 	return nil, fmt.Errorf("read version: %v", err)
-	// }
-
 	b := &hourMap{}
 	if err := binary.Read(rd, binary.BigEndian, &b.baseTime); err != nil {
 		return nil, fmt.Errorf("read baseTime: %v", err)
@@ -219,6 +265,21 @@ func readHourMap(rd io.Reader) (*hourMap, error) {
 		}
 		b.hashIdx[k] = v
 	}
+
+	var keysLen uint32
+	if err := binary.Read(rd, binary.BigEndian, &keysLen); err != nil {
+		return nil, fmt.Errorf("read keys length: %v", err)
+	}
+
+	b.keys = make([]uint64, keysLen)
+	if err := binary.Read(rd, binary.BigEndian, b.keys); err != nil {
+		return nil, fmt.Errorf("read keys: %v", err)
+	}
+
+	b.maps = make([]uint16, keysLen)
+	if err := binary.Read(rd, binary.BigEndian, b.maps); err != nil {
+		return nil, fmt.Errorf("read maps: %v", err)
+	}
 	return b, nil
 }
 
@@ -250,33 +311,10 @@ func (b *hourMap) writeTo(buf io.Writer) {
 		binary.Write(buf, binary.BigEndian, k)
 		binary.Write(buf, binary.BigEndian, v)
 	}
-}
 
-func h16(offset, v uint32) uint32 {
-	v = combinehash(v, offset) & 0xffff
-	return offset<<16 | v
-}
-
-func combinehash(k1, seed uint32) uint32 {
-	h1 := seed
-
-	k1 *= 0xcc9e2d51
-	k1 = bits.RotateLeft32(k1, 15)
-	k1 *= 0x1b873593
-
-	h1 ^= k1
-	h1 = bits.RotateLeft32(h1, 13)
-	h1 = h1*4 + h1 + 0xe6546b64
-
-	h1 ^= uint32(4)
-
-	h1 ^= h1 >> 16
-	h1 *= 0x85ebca6b
-	h1 ^= h1 >> 13
-	h1 *= 0xc2b2ae35
-	h1 ^= h1 >> 16
-
-	return h1
+	binary.Write(buf, binary.BigEndian, uint32(len(b.keys)))
+	binary.Write(buf, binary.BigEndian, b.keys)
+	binary.Write(buf, binary.BigEndian, b.maps)
 }
 
 func (b *Day) String() string {
@@ -289,63 +327,14 @@ func (b *Day) String() string {
 }
 
 func (b *hourMap) debug(buf io.Writer) {
-	fmt.Fprintf(buf, "[%v] ", time.Unix(b.baseTime/10, 0).Format(time.ANSIC))
+	fmt.Fprintf(buf, "[%v] ", time.Unix(b.baseTime/10, 0).Format(time.Stamp))
+	if len(b.keys) > 0 {
+		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d) ",
+			len(b.keys), b.keys[len(b.keys)-1], b.maps[len(b.maps)-1])
+	} else {
+		fmt.Fprintf(buf, "keys: none ")
+	}
 	fmt.Fprintf(buf, "fwd: %d (size=%db) ", b.fwd.GetCardinality(), b.fwd.GetSerializedSizeInBytes())
 	fmt.Fprintf(buf, "back: %d (size=%db) ", b.back.GetCardinality(), b.back.GetSerializedSizeInBytes())
 	fmt.Fprintf(buf, "hash: %d (loop=%v, ctr=%x)", len(b.hashIdx), b.hashCtr/0xffff, b.hashCtr)
-
-	// var tmp [64]int
-	// for _, v := range b.hashIdx {
-	// 	tmp[v/1024]++
-	// }
-
-	// for i := 0; i < len(tmp); i += 4 {
-	// 	for j := 0; j < 4; j++ {
-	// 		x := (i + j)
-	// 		fmt.Fprintf(buf, "%04x-%04x %-5d\t", x*1024, (x+1)*1024-1, tmp[x])
-	// 	}
-	// 	buf.WriteString("\n")
-	// }
-}
-
-type JoinedResult struct {
-	hours [24]struct {
-		m        *roaring.Bitmap
-		scores   map[uint32]int8
-		baseTime int64
-	}
-}
-
-func (br *JoinedResult) ToBitmapArray() (res [24]*roaring.Bitmap) {
-	for i, v := range br.hours {
-		res[i] = v.m
-	}
-	return
-}
-
-func (br *JoinedResult) Iterate(f func(ts int64, scores int) bool) {
-	for i := 23; i >= 0; i-- {
-		iter := br.hours[i].m.ReverseIterator()
-		for iter.HasNext() {
-			v := iter.Next()
-			if !f(br.hours[i].baseTime+int64(v), int(br.hours[i].scores[v])) {
-				break
-			}
-		}
-	}
-}
-
-func (r *JoinedResult) Subtract(r2 *JoinedResult) {
-	for i := 23; i >= 0; i-- {
-		x := &r.hours[i]
-		if x.baseTime != r2.hours[i].baseTime {
-			panic("JoinedResult.Subtract: unmatched base time")
-		}
-		x.m.AndNot(r2.hours[i].m)
-		for k := range x.scores {
-			if !x.m.Contains(k) {
-				delete(x.scores, k)
-			}
-		}
-	}
 }

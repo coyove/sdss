@@ -85,10 +85,10 @@ func Id() (id uint64) {
 }
 
 func IdStr() string {
-	return base40Encode(Id())
+	return Base40Encode(Id())
 }
 
-func base40Encode(id uint64) string {
+func Base40Encode(id uint64) string {
 	buf := make([]byte, 12)
 	for i := range buf {
 		m := id % 40
@@ -99,14 +99,14 @@ func base40Encode(id uint64) string {
 }
 
 func UnixDeciToIdStr(m int64) string {
-	return base40Encode(uint64(m-tsOffset) << tsBits)
+	return Base40Encode(uint64(m-tsOffset) << tsBits)
 }
 
-func ParseUnixDeci(id uint64) int64 {
+func ParseIdUnixDeci(id uint64) int64 {
 	return int64(id>>tsBits) + tsOffset
 }
 
-func ParseStrUnixDeci(idstr string) (int64, bool) {
+func Base40Decode(idstr string) (uint64, bool) {
 	if len(idstr) != 12 {
 		return 0, false
 	}
@@ -119,7 +119,12 @@ func ParseStrUnixDeci(idstr string) (int64, bool) {
 		}
 		id = (id + uint64(idx)) * 40
 	}
-	return ParseUnixDeci(id / 40), true
+	return id / 40, true
+}
+
+func ParseIdStrUnix(idstr string) (int64, bool) {
+	id, ok := Base40Decode(idstr)
+	return ParseIdUnixDeci(id) / 10, ok
 }
 
 func Rand() float64 {

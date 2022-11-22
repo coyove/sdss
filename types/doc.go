@@ -23,19 +23,12 @@ func (doc *Document) MarshalBinary() []byte {
 }
 
 func (doc *Document) CreateTime() int64 {
-	ts, _ := clock.ParseStrUnixDeci(doc.Id)
+	ts, _ := clock.ParseIdStrUnix(doc.Id)
 	return ts
 }
 
 func (doc *Document) String() string {
 	return fmt.Sprintf("%d(%s): %q", doc.CreateTime(), doc.Id, doc.Content)
-}
-
-type DocumentToken struct {
-	Namespace string
-	Id        string
-	Token     string
-	OutError  chan error
 }
 
 func StrHash(s string) uint32 {

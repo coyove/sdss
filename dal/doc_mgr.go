@@ -1,12 +1,8 @@
 package dal
 
 import (
-	"encoding/json"
-	"fmt"
 	"sync"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/types"
 )
@@ -42,27 +38,30 @@ func addDoc(doc *types.Document) error {
 	return nil
 }
 
-func getDoc(id string) (doc *types.Document, err error) {
-	// cm.mu.Lock()
-	// content = cm.m[id]
-	// cm.mu.Unlock()
-	resp, err := db.GetItem(&dynamodb.GetItemInput{
-		TableName: &tableFTS,
-		Key: map[string]*dynamodb.AttributeValue{
-			"nsid": {S: aws.String("doc")},
-			"ts":   {S: aws.String(id)},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("dal get document: store error: %v", err)
+func getDoc(id []string) (docs []*types.Document, err error) {
+	cm.mu.Lock()
+	for _, id := range id {
+		docs = append(docs, cm.m[id])
 	}
+	cm.mu.Unlock()
+	return
+	// resp, err := db.GetItem(&dynamodb.GetItemInput{
+	// 	TableName: &tableFTS,
+	// 	Key: map[string]*dynamodb.AttributeValue{
+	// 		"nsid": {S: aws.String("doc")},
+	// 		"ts":   {S: aws.String(id)},
+	// 	},
+	// })
+	// if err != nil {
+	// 	return nil, fmt.Errorf("dal get document: store error: %v", err)
+	// }
 
-	v := resp.Item["content"]
-	if v == nil {
-		return nil, nil
-	}
-	doc = &types.Document{}
-	return doc, json.Unmarshal(v.B, doc)
+	// v := resp.Item["content"]
+	// if v == nil {
+	// 	return nil, nil
+	// }
+	// doc = &types.Document{}
+	// return doc, json.Unmarshal(v.B, doc)
 }
 
 func scanDoc(unix int64) (docs []*types.Document, err error) {
