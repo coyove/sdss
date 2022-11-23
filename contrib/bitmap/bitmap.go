@@ -32,10 +32,10 @@ type Day struct {
 	hours    [24]*hourMap
 }
 
-func New(baseTime int64) *Day {
+func New(baseTime int64, hashNum int8) *Day {
 	d := &Day{baseTime: baseTime / day * day * 10}
 	for i := range d.hours {
-		d.hours[i] = newHourMap(d.baseTime + hour10*int64(i))
+		d.hours[i] = newHourMap(d.baseTime+hour10*int64(i), hashNum)
 	}
 	return d
 }
@@ -47,6 +47,7 @@ func (b *Day) BaseTime() int64 {
 type hourMap struct {
 	mu       sync.RWMutex
 	baseTime int64 // baseTime + 16 bits ts = final timestamp
+	hashNum  int8
 
 	fwd  *roaring.Bitmap // 16 bits ts + 16 bits hash
 	back *roaring.Bitmap // 16 bits hash idx + 16 bits ts
@@ -58,9 +59,10 @@ type hourMap struct {
 	maps []uint16 // key -> ts offset maps
 }
 
-func newHourMap(baseTime int64) *hourMap {
+func newHourMap(baseTime int64, hashNum int8) *hourMap {
 	m := &hourMap{
 		baseTime: baseTime / hour10 * hour10,
+		hashNum:  hashNum,
 		fwd:      roaring.New(),
 		back:     roaring.New(),
 		hashIdx:  map[uint32]uint16{},
@@ -104,18 +106,19 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 			continue
 		}
 
-		h := h16(offset, v)
-		if !b.fwd.Contains(h) {
-			if b.fwd.AndCardinality(andTable[offset]) > 1024 {
-				// Bitmap is too dense.
-				idx := uint16(b.hashCtr & 0xffff)
-				b.hashIdx[v] = idx
-				b.hashCtr++
-				b.back.Add(uint32(idx)<<16 | offset)
-				continue
-			}
+		if b.fwd.AndCardinality(andTable[offset]) > 1024*uint64(b.hashNum) {
+			// Bitmap is too dense.
+			idx := uint16(b.hashCtr & 0xffff)
+			b.hashIdx[v] = idx
+			b.hashCtr++
+			b.back.Add(uint32(idx)<<16 | offset)
+			continue
 		}
-		b.fwd.Add(h)
+
+		h := h16(offset, v)
+		for i := 0; i < int(b.hashNum); i++ {
+			b.fwd.Add(h[i])
+		}
 	}
 }
 
@@ -153,7 +156,13 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 		offset := iter.Next() >> 16
 
 		for _, v := range vs {
-			if b.fwd.Contains(h16(offset, v)) {
+			h, s := h16(offset, v), 0
+			for i := 0; i < int(b.hashNum); i++ {
+				if b.fwd.Contains(h[i]) {
+					s++
+				}
+			}
+			if s == int(b.hashNum) {
 				m.Add(offset)
 				scores[offset]++
 			}
@@ -224,6 +233,10 @@ func readHourMap(rd io.Reader) (*hourMap, error) {
 	b := &hourMap{}
 	if err := binary.Read(rd, binary.BigEndian, &b.baseTime); err != nil {
 		return nil, fmt.Errorf("read baseTime: %v", err)
+	}
+
+	if err := binary.Read(rd, binary.BigEndian, &b.hashNum); err != nil {
+		return nil, fmt.Errorf("read hashNum: %v", err)
 	}
 
 	var topSize uint64
@@ -298,6 +311,7 @@ func (b *hourMap) writeTo(buf io.Writer) {
 	defer b.mu.Unlock()
 
 	binary.Write(buf, binary.BigEndian, b.baseTime)
+	binary.Write(buf, binary.BigEndian, b.hashNum)
 
 	binary.Write(buf, binary.BigEndian, b.fwd.GetSerializedSizeInBytes())
 	b.fwd.WriteTo(buf)
@@ -327,14 +341,14 @@ func (b *Day) String() string {
 }
 
 func (b *hourMap) debug(buf io.Writer) {
-	fmt.Fprintf(buf, "[%v] ", time.Unix(b.baseTime/10, 0).Format(time.Stamp))
+	fmt.Fprintf(buf, "[%v] #hash: %d, ", time.Unix(b.baseTime/10, 0).Format("06-01-02-15"), b.hashNum)
 	if len(b.keys) > 0 {
-		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d) ",
+		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d), ",
 			len(b.keys), b.keys[len(b.keys)-1], b.maps[len(b.maps)-1])
 	} else {
-		fmt.Fprintf(buf, "keys: none ")
+		fmt.Fprintf(buf, "keys: none, ")
 	}
-	fmt.Fprintf(buf, "fwd: %d (size=%db) ", b.fwd.GetCardinality(), b.fwd.GetSerializedSizeInBytes())
-	fmt.Fprintf(buf, "back: %d (size=%db) ", b.back.GetCardinality(), b.back.GetSerializedSizeInBytes())
-	fmt.Fprintf(buf, "hash: %d (loop=%v, ctr=%x)", len(b.hashIdx), b.hashCtr/0xffff, b.hashCtr)
+	fmt.Fprintf(buf, "fwd: %d (size=%db), ", b.fwd.GetCardinality(), b.fwd.GetSerializedSizeInBytes())
+	fmt.Fprintf(buf, "back: %d (size=%db), ", b.back.GetCardinality(), b.back.GetSerializedSizeInBytes())
+	fmt.Fprintf(buf, "raw: %d (loop=%v, ctr=%x)", len(b.hashIdx), b.hashCtr/0xffff, b.hashCtr)
 }

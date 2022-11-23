@@ -46,7 +46,7 @@ func lineOf(path string, ln int) string {
 func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
-	b := New(now)
+	b := New(now, 2)
 
 	cached, _ := ioutil.ReadFile("cache")
 	if len(cached) > 0 {
@@ -67,7 +67,7 @@ func TestBitmap2(t *testing.T) {
 	}()
 
 	rd := csv.NewReader(f)
-	for i := 0; false && i < 100000; i++ {
+	for i := 0; false && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -95,12 +95,15 @@ func TestBitmap2(t *testing.T) {
 	ioutil.WriteFile("cache", x, 0777)
 
 	start := clock.Now()
-	gs := ngram.Split("italian chicken egg")
+	gs := ngram.Split("chinese")
 	var q []uint32
 	for k := range gs {
 		q = append(q, types.StrHash(k))
 	}
-	for _, res := range filterKTS(b.Join(q, 0, false), len(q)) {
+
+	results := filterKTS(b.Join(q, 0, false), len(q))
+	hits, total := 0, map[int64]bool{}
+	for _, res := range results {
 		line := lineOf(path, int(res.Key))
 		s := 0
 		for k := range gs {
@@ -110,15 +113,17 @@ func TestBitmap2(t *testing.T) {
 		}
 		if s == len(gs) {
 			fmt.Println(res, line)
+			hits++
 		}
+		total[res.Time] = true
 	}
-	fmt.Println(time.Since(start))
+	fmt.Println(time.Since(start), hits, len(total))
 }
 
 func TestBitmap(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
-	b := New(now)
+	b := New(now, 2)
 
 	ctr := 0
 	var store []uint32
