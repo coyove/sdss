@@ -2,145 +2,152 @@ package ngram
 
 import (
 	"bytes"
-	"strings"
+	"fmt"
 	"unicode"
 	"unicode/utf8"
-
-	"golang.org/x/text/unicode/norm"
 )
 
-func Split(text string) (res map[string]float64) {
-	res = map[string]float64{}
+type Token struct {
+	Name   string
+	Freq   float64
+	Quoted bool
+}
 
-	tmpbuf := bytes.Buffer{}
-	total := 0
-	lastSplitText := ""
+func (tok Token) String() string {
+	if tok.Quoted {
+		return fmt.Sprintf("%q(%.3f)", tok.Name, tok.Freq)
+	}
+	return fmt.Sprintf("%s(%.3f)", tok.Name, tok.Freq)
+}
 
-	splitter := func(v string) {
-		if v == "" {
-			return
-		}
-
-		r, _ := utf8.DecodeRuneInString(v)
-		if lastSplitText != "" {
-			lastr, _ := utf8.DecodeLastRuneInString(lastSplitText)
-			if (lastr <= utf8.RuneSelf) != (r <= utf8.RuneSelf) {
-				tmpbuf.Reset()
-				tmpbuf.WriteRune(cv(lastr))
-				tmpbuf.WriteRune(cv(r))
-				res[strings.ToLower(tmpbuf.String())]++
-				total++
-			}
-		}
-		// fmt.Println(lastSplitText, v)
-		lastSplitText = v
-
-		if r < utf8.RuneSelf {
-			if len(v) == 1 {
-				return
-			}
-			res[lemma(v)]++
-			total++
-			return
-		}
-
-		lastr := utf8.RuneError
-		runeCount := 0
-		for len(v) > 0 {
-			r, sz := utf8.DecodeRuneInString(v)
-			v = v[sz:]
-
-			if lastr != utf8.RuneError {
-				tmpbuf.Reset()
-				tmpbuf.WriteRune(cv(lastr))
-				tmpbuf.WriteRune(cv(r))
-				res[tmpbuf.String()]++
-				total++
-			}
-
-			lastr = r
-			runeCount++
-		}
+func Split(text string) (res map[string]Token) {
+	text = removeAccents(text)
+	res = map[string]Token{}
+	sp := splitter{
+		freq: map[string]float64{},
 	}
 
-	lasti, i, lastr := 0, 0, utf8.RuneError
+	prevStart, prevRune := 0, utf8.RuneError
+	inQuote := false
+
+	var i int
 	for i < len(text) {
 		r, sz := utf8.DecodeRuneInString(text[i:])
 		if r == utf8.RuneError {
 			goto BREAK
 		}
 
+		if inQuote {
+			if r == '"' {
+				sp.do(text[prevStart:i], res, true)
+				prevStart = i + sz
+				inQuote = false
+			}
+			i += sz
+			continue
+		}
+
 		// fmt.Println(string(lastr), string(r), isdiff(lastr, r))
-		if lastr != utf8.RuneError {
+		if prevRune != utf8.RuneError {
 			isdiff := false
-			if ac, bc := Continue(lastr), Continue(r); ac != bc {
+			if ac, bc := isContinue(prevRune), isContinue(r); ac != bc {
 				isdiff = true
 			}
-			if ac, bc := lastr <= utf8.RuneSelf, r <= utf8.RuneSelf; ac != bc {
+			if ac, bc := prevRune <= utf8.RuneSelf, r <= utf8.RuneSelf; ac != bc {
 				isdiff = true
 			}
 			if isdiff {
-				splitter(text[lasti:i])
-				lasti = i
+				sp.do(text[prevStart:i], res, false)
+				prevStart = i
 			}
 		}
 		i += sz
 
-		if Continue(r) {
-			lastr = r
+		if isContinue(r) {
+			prevRune = r
 		} else {
-			lastr = utf8.RuneError
-			lasti = i
+			prevRune = utf8.RuneError
+			prevStart = i
+			inQuote = r == '"'
 		}
 	}
-	splitter(text[lasti:])
+	sp.do(text[prevStart:], res, false)
 
 BREAK:
-	for k, v := range res {
-		res[k] = v / float64(total)
+	for k, v := range sp.freq {
+		res[k] = Token{
+			Name:   k,
+			Freq:   v / float64(sp.total),
+			Quoted: res[k].Quoted,
+		}
+		if res[k].Quoted {
+			for k0, v0 := range Split(res[k].Name) {
+				res[k0] = v0
+			}
+		}
 	}
 	return
 }
 
-type set func(rune) bool
-
-func (a set) add(rt *unicode.RangeTable) set {
-	b := in(rt)
-	return func(r rune) bool { return a(r) || b(r) }
+type splitter struct {
+	tmpbuf        bytes.Buffer
+	total         int
+	lastSplitText string
+	freq          map[string]float64
 }
 
-func (a set) sub(rt *unicode.RangeTable) set {
-	b := in(rt)
-	return func(r rune) bool { return a(r) && !b(r) }
-}
-
-func in(rt *unicode.RangeTable) set {
-	return func(r rune) bool { return unicode.Is(rt, r) }
-}
-
-var id_continue = set(unicode.IsLetter).
-	add(unicode.Nl).
-	add(unicode.Other_ID_Start).
-	sub(unicode.Pattern_Syntax).
-	sub(unicode.Pattern_White_Space).
-	add(unicode.Mn).
-	add(unicode.Mc).
-	add(unicode.Nd).
-	add(unicode.Pc).
-	add(unicode.Other_ID_Continue).
-	sub(unicode.Pattern_Syntax).
-	sub(unicode.Pattern_White_Space)
-
-// Continue checks that the rune continues an identifier.
-func Continue(r rune) bool {
-	// id_continue(r) && NFKC(r) in "id_continue*"
-	if !id_continue(r) {
-		return false
+func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
+	if v == "" {
+		return
 	}
-	for _, r := range norm.NFKC.String(string(r)) {
-		if !id_continue(r) {
-			return false
+
+	tok := Token{Quoted: inQuote}
+
+	r, _ := utf8.DecodeRuneInString(v)
+	if s.lastSplitText != "" {
+		lastr, _ := utf8.DecodeLastRuneInString(s.lastSplitText)
+		if (lastr <= utf8.RuneSelf) != (r <= utf8.RuneSelf) {
+			s.tmpbuf.Reset()
+			s.tmpbuf.WriteRune(unicode.ToLower(cv(lastr)))
+			s.tmpbuf.WriteRune(unicode.ToLower(cv(r)))
+			x := s.tmpbuf.String()
+
+			s.freq[x]++
+			res[x] = tok
+			s.total++
 		}
 	}
-	return true
+	// fmt.Println(lastSplitText, v)
+	s.lastSplitText = v
+
+	if r < utf8.RuneSelf {
+		if len(v) == 1 {
+			return
+		}
+		x := lemma(v)
+		s.freq[x]++
+		res[x] = tok
+		s.total++
+		return
+	}
+
+	lastr := utf8.RuneError
+	runeCount := 0
+	for len(v) > 0 {
+		r, sz := utf8.DecodeRuneInString(v)
+		v = v[sz:]
+
+		if lastr != utf8.RuneError {
+			s.tmpbuf.Reset()
+			s.tmpbuf.WriteRune(cv(lastr))
+			s.tmpbuf.WriteRune(cv(r))
+			x := s.tmpbuf.String()
+			s.freq[x]++
+			res[x] = tok
+			s.total++
+		}
+
+		lastr = r
+		runeCount++
+	}
 }

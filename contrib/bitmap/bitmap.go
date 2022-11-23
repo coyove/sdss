@@ -341,7 +341,8 @@ func (b *Day) String() string {
 }
 
 func (b *hourMap) debug(buf io.Writer) {
-	fmt.Fprintf(buf, "[%v] #hash: %d, ", time.Unix(b.baseTime/10, 0).Format("06-01-02-15"), b.hashNum)
+	fmt.Fprintf(buf, "[%d;%v] #hash: %d, ",
+		b.baseTime/10, time.Unix(b.baseTime/10, 0).Format("01-02;15"), b.hashNum)
 	if len(b.keys) > 0 {
 		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d), ",
 			len(b.keys), b.keys[len(b.keys)-1], b.maps[len(b.maps)-1])
