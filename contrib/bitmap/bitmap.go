@@ -49,23 +49,16 @@ type hourMap struct {
 	baseTime int64 // baseTime + 16 bits ts = final timestamp
 	hashNum  int8
 
-	fwd  *roaring.Bitmap // 16 bits ts + 16 bits hash
-	back *roaring.Bitmap // 16 bits hash idx + 16 bits ts
-
-	hashCtr uint64
-	hashIdx map[uint32]uint16
-
-	keys []uint64 // keys
-	maps []uint16 // key -> ts offset maps
+	table *roaring.Bitmap // 20 bits hash + 12 bits ts
+	keys  []uint64        // keys
+	maps  []uint16        // key -> ts offset maps
 }
 
 func newHourMap(baseTime int64, hashNum int8) *hourMap {
 	m := &hourMap{
 		baseTime: baseTime / hour10 * hour10,
 		hashNum:  hashNum,
-		fwd:      roaring.New(),
-		back:     roaring.New(),
-		hashIdx:  map[uint32]uint16{},
+		table:    roaring.New(),
 	}
 	return m
 }
@@ -101,36 +94,16 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	b.maps = append(b.maps, uint16(offset))
 
 	for _, v := range vs {
-		if idx, ok := b.hashIdx[v]; ok {
-			b.back.Add(uint32(idx)<<16 | offset)
-			continue
-		}
-
-		if b.fwd.AndCardinality(andTable[offset]) > 1024*uint64(b.hashNum) {
-			// Bitmap is too dense.
-			idx := uint16(b.hashCtr & 0xffff)
-			b.hashIdx[v] = idx
-			b.hashCtr++
-			b.back.Add(uint32(idx)<<16 | offset)
-			continue
-		}
-
-		h := h16(offset, v)
+		h := h16(v, offset/10, int(offset%10))
 		for i := 0; i < int(b.hashNum); i++ {
-			b.fwd.Add(h[i])
+			b.table.Add(h[i])
 		}
 	}
 }
 
-func (b *Day) Join(hashes []uint32, n, minScore int) (res []KeyTimeScore) {
-	if minScore < 0 {
-		minScore = 0
-	}
-	if minScore > len(hashes) {
-		minScore = len(hashes)
-	}
+func (b *Day) Join(hashes []uint32, n int) (res []KeyTimeScore) {
 	for i := 23; i >= 0; i-- {
-		b.hours[i].join(hashes, i, minScore, &res)
+		b.hours[i].join(hashes, i, &res)
 		if n > 0 && len(res) >= n {
 			break
 		}
@@ -144,55 +117,58 @@ func (b *Day) Join(hashes []uint32, n, minScore int) (res []KeyTimeScore) {
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hr int, minScore int, res *[]KeyTimeScore) {
+func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	m := roaring.New()
-	scores := map[uint32]int{}
-
-	iter := b.fwd.Iterator()
-	for iter.HasNext() {
-		offset := iter.Next() >> 16
-		misses := 0
-
-	NEXT:
-		for _, v := range vs {
-			h := h16(offset, v)
-			for i := 0; i < int(b.hashNum); i++ {
-				if !b.fwd.Contains(h[i]) {
-					misses++
-					if misses > len(vs)-minScore {
-						goto BREAK
-					}
-					continue NEXT
-				}
-			}
-			m.Add(offset)
-			scores[offset]++
-		}
-
-	BREAK:
-		iter.AdvanceIfNeeded((offset + 1) << 16)
+	type hashState struct {
+		d int
+		v uint32
+		roaring.Bitmap
 	}
 
+	hashes := map[uint32]*hashState{}
+	hashSort := []uint32{}
 	for _, v := range vs {
-		if idx, ok := b.hashIdx[v]; ok {
-			iter := b.back.Iterator()
-			iter.AdvanceIfNeeded(uint32(idx) << 16)
-			for iter.HasNext() {
-				v := iter.Next()
-				if v>>16 != uint32(idx) {
-					break
-				}
-				offset := v & 0xffff
-				m.Add(offset)
-				scores[offset]++
+		for d := 0; d < 10; d++ {
+			h := h16(v, 0, d)
+			s := &hashState{
+				d: d,
+				v: v,
+			}
+			for i := 0; i < int(b.hashNum); i++ {
+				hashes[h[i]] = s
+				hashSort = append(hashSort, h[i])
 			}
 		}
 	}
+	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i] < hashSort[j] })
 
-	for iter, i := m.Iterator(), 0; iter.HasNext(); {
+	scores := map[uint32]int{}
+	iter := b.table.Iterator()
+	for _, h := range hashSort {
+		iter.AdvanceIfNeeded(h)
+		for iter.HasNext() {
+			v := iter.Next()
+			if v>>12 != h>>12 {
+				break
+			}
+			ts := (v&0xfff)*10 + uint32(hashes[h].d)
+			hashes[h].Add(ts)
+			scores[ts]++
+		}
+	}
+
+	var final *roaring.Bitmap
+	for _, h := range hashes {
+		if final == nil {
+			final = &h.Bitmap
+		} else {
+			final.Or(&h.Bitmap)
+		}
+	}
+
+	for iter, i := final.Iterator(), 0; iter.HasNext(); {
 		offset := uint16(iter.Next())
 		for ; i < len(b.keys); i++ {
 			if b.maps[i] < offset {
@@ -246,42 +222,12 @@ func readHourMap(rd io.Reader) (*hourMap, error) {
 
 	var topSize uint64
 	if err := binary.Read(rd, binary.BigEndian, &topSize); err != nil {
-		return nil, fmt.Errorf("read fwd bitmap size: %v", err)
+		return nil, fmt.Errorf("read table bitmap size: %v", err)
 	}
 
-	b.fwd = roaring.New()
-	if _, err := b.fwd.ReadFrom(io.LimitReader(rd, int64(topSize))); err != nil {
-		return nil, fmt.Errorf("read fwd bitmap: %v", err)
-	}
-
-	if err := binary.Read(rd, binary.BigEndian, &topSize); err != nil {
-		return nil, fmt.Errorf("read back bitmap size: %v", err)
-	}
-
-	b.back = roaring.New()
-	if _, err := b.back.ReadFrom(io.LimitReader(rd, int64(topSize))); err != nil {
-		return nil, fmt.Errorf("read back bitmap: %v", err)
-	}
-
-	if err := binary.Read(rd, binary.BigEndian, &b.hashCtr); err != nil {
-		return nil, fmt.Errorf("read hashCtr: %v", err)
-	}
-
-	if err := binary.Read(rd, binary.BigEndian, &topSize); err != nil {
-		return nil, fmt.Errorf("read hashIdx size: %v", err)
-	}
-
-	b.hashIdx = make(map[uint32]uint16, topSize)
-	for i := 0; i < int(topSize); i++ {
-		var k uint32
-		var v uint16
-		if err := binary.Read(rd, binary.BigEndian, &k); err != nil {
-			return nil, fmt.Errorf("read hashIdx key: %v", err)
-		}
-		if err := binary.Read(rd, binary.BigEndian, &v); err != nil {
-			return nil, fmt.Errorf("read hashIdx value: %v", err)
-		}
-		b.hashIdx[k] = v
+	b.table = roaring.New()
+	if _, err := b.table.ReadFrom(io.LimitReader(rd, int64(topSize))); err != nil {
+		return nil, fmt.Errorf("read table bitmap: %v", err)
 	}
 
 	var keysLen uint32
@@ -318,18 +264,8 @@ func (b *hourMap) writeTo(buf io.Writer) {
 	binary.Write(buf, binary.BigEndian, b.baseTime)
 	binary.Write(buf, binary.BigEndian, b.hashNum)
 
-	binary.Write(buf, binary.BigEndian, b.fwd.GetSerializedSizeInBytes())
-	b.fwd.WriteTo(buf)
-
-	binary.Write(buf, binary.BigEndian, b.back.GetSerializedSizeInBytes())
-	b.back.WriteTo(buf)
-
-	binary.Write(buf, binary.BigEndian, b.hashCtr)
-	binary.Write(buf, binary.BigEndian, uint64(len(b.hashIdx)))
-	for k, v := range b.hashIdx {
-		binary.Write(buf, binary.BigEndian, k)
-		binary.Write(buf, binary.BigEndian, v)
-	}
+	binary.Write(buf, binary.BigEndian, b.table.GetSerializedSizeInBytes())
+	b.table.WriteTo(buf)
 
 	binary.Write(buf, binary.BigEndian, uint32(len(b.keys)))
 	binary.Write(buf, binary.BigEndian, b.keys)
@@ -354,7 +290,5 @@ func (b *hourMap) debug(buf io.Writer) {
 	} else {
 		fmt.Fprintf(buf, "keys: none, ")
 	}
-	fmt.Fprintf(buf, "fwd: %d (size=%db), ", b.fwd.GetCardinality(), b.fwd.GetSerializedSizeInBytes())
-	fmt.Fprintf(buf, "back: %d (size=%db), ", b.back.GetCardinality(), b.back.GetSerializedSizeInBytes())
-	fmt.Fprintf(buf, "raw: %d (loop=%v, ctr=%x)", len(b.hashIdx), b.hashCtr/0xffff, b.hashCtr)
+	fmt.Fprintf(buf, "table: %d (size=%db)", b.table.GetCardinality(), b.table.GetSerializedSizeInBytes())
 }
