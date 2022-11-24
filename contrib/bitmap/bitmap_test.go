@@ -101,7 +101,7 @@ func TestBitmap2(t *testing.T) {
 		q = append(q, types.StrHash(k))
 	}
 
-	results := filterKTS(b.Join(q, 0, false), len(q))
+	results := filterKTS(b.Join(q, 0, len(q)/2), len(q))
 	hits, total := 0, map[int64]bool{}
 	for _, res := range results {
 		line := lineOf(path, int(res.Key))
@@ -115,7 +115,7 @@ func TestBitmap2(t *testing.T) {
 			fmt.Println(res, line)
 			hits++
 		}
-		total[res.Time] = true
+		total[res.UnixDeci] = true
 	}
 	fmt.Println(time.Since(start), hits, len(total))
 }
@@ -134,7 +134,7 @@ func TestBitmap(t *testing.T) {
 		}
 		for i := 0; i < N; i++ {
 			v := rand.Uint32()
-			b.addWithTime(uint64(t*100000+i), now+int64(t), []uint32{v})
+			b.addWithTime(uint64(t*100000+i), now*10+int64(t), []uint32{v})
 			ctr++
 			store = append(store, v)
 		}
@@ -155,6 +155,6 @@ func TestBitmap(t *testing.T) {
 		for k = range b.hours[0].hashIdx {
 			break
 		}
-		fmt.Println(b.Join([]uint32{k}, 0, true))
+		fmt.Println(b.Join([]uint32{k}, 0, 0))
 	}
 }

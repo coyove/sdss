@@ -122,29 +122,29 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	}
 }
 
-func (b *Day) Join(vs []uint32, n int, desc bool) (res []KeyTimeScore) {
+func (b *Day) Join(hashes []uint32, n, minScore int) (res []KeyTimeScore) {
+	if minScore < 0 {
+		minScore = 0
+	}
+	if minScore > len(hashes) {
+		minScore = len(hashes)
+	}
 	for i := 23; i >= 0; i-- {
-		b.hours[i].join(vs, i, &res)
+		b.hours[i].join(hashes, i, minScore, &res)
 		if n > 0 && len(res) >= n {
 			break
 		}
 	}
 	sort.Slice(res, func(i, j int) bool {
-		if res[i].Time == res[j].Time {
-			if desc {
-				return res[i].Key > res[j].Key
-			}
-			return res[i].Key < res[j].Key
+		if res[i].UnixDeci == res[j].UnixDeci {
+			return res[i].Key > res[j].Key
 		}
-		if desc {
-			return res[i].Time > res[j].Time
-		}
-		return res[i].Time < res[j].Time
+		return res[i].UnixDeci > res[j].UnixDeci
 	})
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
+func (b *hourMap) join(vs []uint32, hr int, minScore int, res *[]KeyTimeScore) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -154,20 +154,25 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 	iter := b.fwd.Iterator()
 	for iter.HasNext() {
 		offset := iter.Next() >> 16
+		misses := 0
 
+	NEXT:
 		for _, v := range vs {
-			h, s := h16(offset, v), 0
+			h := h16(offset, v)
 			for i := 0; i < int(b.hashNum); i++ {
-				if b.fwd.Contains(h[i]) {
-					s++
+				if !b.fwd.Contains(h[i]) {
+					misses++
+					if misses > len(vs)-minScore {
+						goto BREAK
+					}
+					continue NEXT
 				}
 			}
-			if s == int(b.hashNum) {
-				m.Add(offset)
-				scores[offset]++
-			}
+			m.Add(offset)
+			scores[offset]++
 		}
 
+	BREAK:
 		iter.AdvanceIfNeeded((offset + 1) << 16)
 	}
 
@@ -197,9 +202,9 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 				break
 			}
 			*res = append(*res, KeyTimeScore{
-				Key:   b.keys[i],
-				Time:  (b.baseTime + int64(b.maps[i])) / 10,
-				Score: int(scores[uint32(offset)]),
+				Key:      b.keys[i],
+				UnixDeci: (b.baseTime + int64(b.maps[i])),
+				Score:    int(scores[uint32(offset)]),
 			})
 		}
 	}

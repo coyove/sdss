@@ -8,26 +8,31 @@ import (
 )
 
 type Token struct {
-	Name   string
-	Freq   float64
-	Quoted bool
+	Name   string  `json:"name"`
+	Raw    string  `json:"raw"`
+	Freq   float64 `json:"freq"`
+	Quoted bool    `json:"quoted"`
 }
 
 func (tok Token) String() string {
-	if tok.Quoted {
-		return fmt.Sprintf("%q(%.3f)", tok.Name, tok.Freq)
+	s := tok.Name
+	if s != tok.Raw {
+		s = "<" + s + "," + tok.Raw + ">"
 	}
-	return fmt.Sprintf("%s(%.3f)", tok.Name, tok.Freq)
+	if tok.Quoted {
+		return fmt.Sprintf("%q(%.3f)", s, tok.Freq)
+	}
+	return fmt.Sprintf("%s(%.3f)", s, tok.Freq)
 }
 
 func Split(text string) (res map[string]Token) {
-	text = removeAccents(text)
+	// text = removeAccents(text)
 	res = map[string]Token{}
 	sp := splitter{
 		freq: map[string]float64{},
 	}
 
-	prevStart, prevRune := 0, utf8.RuneError
+	prevStart, prevRune, prevRuneNormalized := 0, utf8.RuneError, utf8.RuneError
 	inQuote := false
 
 	var i int
@@ -50,10 +55,10 @@ func Split(text string) (res map[string]Token) {
 		// fmt.Println(string(lastr), string(r), isdiff(lastr, r))
 		if prevRune != utf8.RuneError {
 			isdiff := false
-			if ac, bc := isContinue(prevRune), isContinue(r); ac != bc {
+			if isContinue(prevRune) != isContinue(r) {
 				isdiff = true
 			}
-			if ac, bc := prevRune <= utf8.RuneSelf, r <= utf8.RuneSelf; ac != bc {
+			if (prevRuneNormalized <= utf8.RuneSelf) != (normal(r) <= utf8.RuneSelf) {
 				isdiff = true
 			}
 			if isdiff {
@@ -65,6 +70,7 @@ func Split(text string) (res map[string]Token) {
 
 		if isContinue(r) {
 			prevRune = r
+			prevRuneNormalized = normal(r)
 		} else {
 			prevRune = utf8.RuneError
 			prevStart = i
@@ -75,12 +81,10 @@ func Split(text string) (res map[string]Token) {
 
 BREAK:
 	for k, v := range sp.freq {
-		res[k] = Token{
-			Name:   k,
-			Freq:   v / float64(sp.total),
-			Quoted: res[k].Quoted,
-		}
-		if res[k].Quoted {
+		tok := res[k]
+		tok.Freq = v / float64(sp.total)
+		res[k] = tok
+		if tok.Quoted {
 			for k0, v0 := range Split(res[k].Name) {
 				res[k0] = v0
 			}
@@ -101,8 +105,6 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 		return
 	}
 
-	tok := Token{Quoted: inQuote}
-
 	r, _ := utf8.DecodeRuneInString(v)
 	if s.lastSplitText != "" {
 		lastr, _ := utf8.DecodeLastRuneInString(s.lastSplitText)
@@ -110,23 +112,26 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 			s.tmpbuf.Reset()
 			s.tmpbuf.WriteRune(unicode.ToLower(cv(lastr)))
 			s.tmpbuf.WriteRune(unicode.ToLower(cv(r)))
+			n := s.tmpbuf.Len()
+			s.tmpbuf.WriteRune(lastr)
+			s.tmpbuf.WriteRune(r)
 			x := s.tmpbuf.String()
 
-			s.freq[x]++
-			res[x] = tok
+			s.freq[x[:n]]++
+			res[x[:n]] = Token{Name: x[:n], Raw: x[n:], Quoted: inQuote}
 			s.total++
 		}
 	}
 	// fmt.Println(lastSplitText, v)
 	s.lastSplitText = v
 
-	if r < utf8.RuneSelf {
+	if normal(r) < utf8.RuneSelf {
 		if len(v) == 1 {
 			return
 		}
 		x := lemma(v)
 		s.freq[x]++
-		res[x] = tok
+		res[x] = Token{Name: x, Raw: v, Quoted: inQuote}
 		s.total++
 		return
 	}
@@ -141,9 +146,13 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 			s.tmpbuf.Reset()
 			s.tmpbuf.WriteRune(cv(lastr))
 			s.tmpbuf.WriteRune(cv(r))
+			n := s.tmpbuf.Len()
+			s.tmpbuf.WriteRune(lastr)
+			s.tmpbuf.WriteRune(r)
 			x := s.tmpbuf.String()
-			s.freq[x]++
-			res[x] = tok
+
+			s.freq[x[:n]]++
+			res[x[:n]] = Token{Name: x[:n], Raw: x[n:], Quoted: inQuote}
 			s.total++
 		}
 

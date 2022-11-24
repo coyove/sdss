@@ -56,16 +56,28 @@ func cv(in rune) rune {
 }
 
 func lemma(word string) string {
-	return englishLemma.Lemma(word)
+	return englishLemma.Lemma(removeAccents(word))
 }
 
 func removeAccents(s string) string {
-	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
-	output, _, e := transform.String(t, s)
+	var accent = transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	output, _, e := transform.String(accent, s)
 	if e != nil {
 		return s
 	}
 	return output
+}
+
+func normal(r rune) rune {
+	var accent = transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	var tmp [32]byte
+	n := utf8.EncodeRune(tmp[:], r)
+	output, _, e := transform.Append(accent, tmp[16:16], tmp[:n])
+	if e != nil {
+		return r
+	}
+	nr, _ := utf8.DecodeRune(output)
+	return nr
 }
 
 type set func(rune) bool

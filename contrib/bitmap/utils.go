@@ -35,18 +35,15 @@ func combinehash(k1, seed uint32) uint32 {
 }
 
 type KeyTimeScore struct {
-	Key   uint64
-	Time  int64
-	Score int
+	Key      uint64
+	UnixDeci int64
+	Score    int
 }
 
-// func (br *JoinedResult) ToBitmapArray() (res [24]*roaring.Bitmap) {
-// 	for i, v := range br.hours {
-// 		res[i] = v.m
-// 	}
-// 	return
-// }
-//
+func (kts KeyTimeScore) Unix() int64 {
+	return kts.UnixDeci / 10
+}
+
 // func (br *JoinedResult) Iterate(f func(ts int64, scores int) bool) {
 // 	for i := 23; i >= 0; i-- {
 // 		iter := br.hours[i].m.ReverseIterator()

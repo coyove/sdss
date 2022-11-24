@@ -217,7 +217,7 @@ func mergeBitmaps(ns string, includes []string, start, end int64, f func([]strin
 		if p.Score < len(hashes)/2 {
 			continue
 		}
-		if p.Time > rawStart {
+		if p.UnixDeci > rawStart {
 			continue
 		}
 		ids = append(ids, clock.Base40Encode(p.Key))
