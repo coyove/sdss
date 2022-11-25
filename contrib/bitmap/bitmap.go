@@ -94,9 +94,9 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	b.maps = append(b.maps, uint16(offset))
 
 	for _, v := range vs {
-		h := h16(v, offset/10, int(offset%10))
+		h := h16(v, b.baseTime, int(offset%10))
 		for i := 0; i < int(b.hashNum); i++ {
-			b.table.Add(h[i])
+			b.table.Add(h[i]<<12 | (offset / 10))
 		}
 	}
 }
@@ -131,7 +131,7 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 	hashSort := []uint32{}
 	for _, v := range vs {
 		for d := 0; d < 10; d++ {
-			h := h16(v, 0, d)
+			h := h16(v, b.baseTime, d)
 			s := &hashState{
 				d: d,
 				v: v,
@@ -147,10 +147,10 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 	scores := map[uint32]int{}
 	iter := b.table.Iterator()
 	for _, h := range hashSort {
-		iter.AdvanceIfNeeded(h)
+		iter.AdvanceIfNeeded(h << 12)
 		for iter.HasNext() {
 			v := iter.Next()
-			if v>>12 != h>>12 {
+			if v>>12 != h {
 				break
 			}
 			ts := (v&0xfff)*10 + uint32(hashes[h].d)
@@ -167,6 +167,7 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 			final.Or(&h.Bitmap)
 		}
 	}
+	fmt.Println(final)
 
 	for iter, i := final.Iterator(), 0; iter.HasNext(); {
 		offset := uint16(iter.Next())

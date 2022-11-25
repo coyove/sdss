@@ -68,13 +68,13 @@ func TestBitmap2(t *testing.T) {
 	}()
 
 	rd := csv.NewReader(f)
-	for i := 0; true && i < 1000; i++ {
+	for i := 0; false && i < 1000000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
 		}
 
-		if i < 0 {
+		if i < 100000 {
 			continue
 		}
 
@@ -107,15 +107,15 @@ func TestBitmap2(t *testing.T) {
 	for _, res := range results {
 		line := lineOf(path, int(res.Key))
 		s := 0
-		for k := range gs {
-			if m, _ := regexp.MatchString("(?i)"+k, line); m {
+		for _, v := range gs {
+			if m, _ := regexp.MatchString("(?i)"+v.Raw, line); m {
 				s++
 			}
 		}
-		// if s == len(gs) {
-		fmt.Println(res, line)
-		hits++
-		// }
+		if s == len(gs) {
+			fmt.Println(res, line)
+			hits++
+		}
 		total[res.UnixDeci] = true
 	}
 	fmt.Println(time.Since(start), hits, len(total))
