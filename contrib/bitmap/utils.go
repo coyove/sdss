@@ -1,9 +1,28 @@
 package bitmap
 
 import (
+	"fmt"
+	"io"
 	"math/bits"
 	"os"
 )
+
+const (
+	JoinAll = iota
+	JoinOne
+	JoinMajor
+)
+
+type meterWriter struct {
+	io.Writer
+	size int
+}
+
+func (m *meterWriter) Write(p []byte) (int, error) {
+	n, err := m.Writer.Write(p)
+	m.size += n
+	return n, err
+}
 
 func h16(v uint32, ts int64, deci int) (out [4]uint32) {
 	out[0] = combinehash(combinehash(v, uint32(deci)), uint32(ts)) & 0xfffff
@@ -43,6 +62,30 @@ type KeyTimeScore struct {
 
 func (kts KeyTimeScore) Unix() int64 {
 	return kts.UnixDeci / 10
+}
+
+func (b *Day) Save(path string) (int, error) {
+	b.mfmu.Lock()
+	defer b.mfmu.Unlock()
+
+	bakpath := fmt.Sprintf("%s.%d.mtfbak", path, b.BaseTime())
+
+	f, err := os.Create(bakpath)
+	if err != nil {
+		return 0, err
+	}
+	sz, err := b.Marshal(f)
+	f.Close()
+	if err != nil {
+		return 0, err
+	}
+
+	if err := os.Remove(path); err != nil {
+		if !os.IsNotExist(err) {
+			return 0, err
+		}
+	}
+	return sz, os.Rename(bakpath, path)
 }
 
 func Load(path string) (*Day, error) {

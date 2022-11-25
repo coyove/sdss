@@ -8,10 +8,10 @@ import (
 )
 
 type Token struct {
-	Name   string  `json:"name"`
-	Raw    string  `json:"raw"`
-	Freq   float64 `json:"freq"`
-	Quoted bool    `json:"quoted"`
+	Name string  `json:"name"`
+	Raw  string  `json:"raw"`
+	Freq float64 `json:"freq"`
+	// Quoted bool    `json:"quoted"`
 }
 
 func (tok Token) String() string {
@@ -19,9 +19,9 @@ func (tok Token) String() string {
 	if s != tok.Raw {
 		s = "<" + s + "," + tok.Raw + ">"
 	}
-	if tok.Quoted {
-		return fmt.Sprintf("%q(%.3f)", s, tok.Freq)
-	}
+	// if tok.Quoted {
+	// 	return fmt.Sprintf("%q(%.3f)", s, tok.Freq)
+	// }
 	return fmt.Sprintf("%s(%.3f)", s, tok.Freq)
 }
 
@@ -33,7 +33,7 @@ func Split(text string) (res map[string]Token) {
 	}
 
 	prevStart, prevRune, prevRuneNormalized := 0, utf8.RuneError, utf8.RuneError
-	inQuote := false
+	// inQuote := false
 
 	var i int
 	for i < len(text) {
@@ -42,15 +42,15 @@ func Split(text string) (res map[string]Token) {
 			goto BREAK
 		}
 
-		if inQuote {
-			if r == '"' {
-				sp.do(text[prevStart:i], res, true)
-				prevStart = i + sz
-				inQuote = false
-			}
-			i += sz
-			continue
-		}
+		// if inQuote {
+		// 	if r == '"' {
+		// 		sp.do(text[prevStart:i], res, true)
+		// 		prevStart = i + sz
+		// 		inQuote = false
+		// 	}
+		// 	i += sz
+		// 	continue
+		// }
 
 		// fmt.Println(string(lastr), string(r), isdiff(lastr, r))
 		if prevRune != utf8.RuneError {
@@ -74,7 +74,7 @@ func Split(text string) (res map[string]Token) {
 		} else {
 			prevRune = utf8.RuneError
 			prevStart = i
-			inQuote = r == '"'
+			// inQuote = r == '"'
 		}
 	}
 	sp.do(text[prevStart:], res, false)
@@ -84,11 +84,11 @@ BREAK:
 		tok := res[k]
 		tok.Freq = v / float64(sp.total)
 		res[k] = tok
-		if tok.Quoted {
-			for k0, v0 := range Split(res[k].Name) {
-				res[k0] = v0
-			}
-		}
+		// if tok.Quoted {
+		// 	for k0, v0 := range Split(res[k].Name) {
+		// 		res[k0] = v0
+		// 	}
+		// }
 	}
 	return
 }
@@ -118,7 +118,7 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 			x := s.tmpbuf.String()
 
 			s.freq[x[:n]]++
-			res[x[:n]] = Token{Name: x[:n], Raw: x[n:], Quoted: inQuote}
+			res[x[:n]] = Token{Name: x[:n], Raw: x[n:]} // , Quoted: inQuote}
 			s.total++
 		}
 	}
@@ -131,7 +131,7 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 		}
 		x := lemma(v)
 		s.freq[x]++
-		res[x] = Token{Name: x, Raw: v, Quoted: inQuote}
+		res[x] = Token{Name: x, Raw: v} //, Quoted: inQuote}
 		s.total++
 		return
 	}
@@ -152,7 +152,7 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 			x := s.tmpbuf.String()
 
 			s.freq[x[:n]]++
-			res[x[:n]] = Token{Name: x[:n], Raw: x[n:], Quoted: inQuote}
+			res[x[:n]] = Token{Name: x[:n], Raw: x[n:]} //, Quoted: inQuote}
 			s.total++
 		}
 

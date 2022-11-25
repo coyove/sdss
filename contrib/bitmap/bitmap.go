@@ -4,9 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
-	"io/ioutil"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -19,15 +18,6 @@ const (
 	hour10 = 3600 * 10
 	day    = 86400
 )
-
-var andTable [hour10]*roaring.Bitmap
-
-func init() {
-	for i := 0; i < hour10; i++ {
-		andTable[i] = roaring.New()
-		andTable[i].AddRange(uint64(i)<<16, uint64(i)<<16+65536)
-	}
-}
 
 type Day struct {
 	mfmu     sync.Mutex
@@ -49,7 +39,7 @@ func (b *Day) BaseTime() int64 {
 
 type hourMap struct {
 	mu       sync.RWMutex
-	baseTime int64 // baseTime + 16 bits ts = final timestamp
+	baseTime int64 // baseTime + 12 bits ts = final timestamp
 	hashNum  int8
 
 	table *roaring.Bitmap // 20 bits hash + 12 bits ts
@@ -104,10 +94,10 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	}
 }
 
-func (b *Day) Join(hashes []uint32, n int) (res []KeyTimeScore) {
+func (b *Day) Join(hashes []uint32, count int, joinType int) (res []KeyTimeScore) {
 	for i := 23; i >= 0; i-- {
-		b.hours[i].join(hashes, i, &res)
-		if n > 0 && len(res) >= n {
+		b.hours[i].join(hashes, i, joinType, &res)
+		if count > 0 && len(res) >= count {
 			break
 		}
 	}
@@ -120,7 +110,7 @@ func (b *Day) Join(hashes []uint32, n int) (res []KeyTimeScore) {
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
+func (b *hourMap) join(vs []uint32, hr int, joinType int, res *[]KeyTimeScore) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -178,10 +168,21 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 			if b.maps[i] > offset {
 				break
 			}
+			s := int(scores[uint32(offset)])
+			switch joinType {
+			case JoinAll:
+				if s != len(vs) {
+					continue
+				}
+			case JoinMajor:
+				if s < len(vs)/2 {
+					continue
+				}
+			}
 			*res = append(*res, KeyTimeScore{
 				Key:      b.keys[i],
 				UnixDeci: (b.baseTime + int64(b.maps[i])),
-				Score:    int(scores[uint32(offset)]),
+				Score:    s,
 			})
 		}
 	}
@@ -210,6 +211,9 @@ func Unmarshal(rd io.Reader) (*Day, error) {
 }
 
 func readHourMap(rd io.Reader) (*hourMap, error) {
+	h := crc32.NewIEEE()
+	rd = io.TeeReader(rd, h)
+
 	b := &hourMap{}
 	if err := binary.Read(rd, binary.BigEndian, &b.baseTime); err != nil {
 		return nil, fmt.Errorf("read baseTime: %v", err)
@@ -243,49 +247,75 @@ func readHourMap(rd io.Reader) (*hourMap, error) {
 	if err := binary.Read(rd, binary.BigEndian, b.maps); err != nil {
 		return nil, fmt.Errorf("read maps: %v", err)
 	}
+
+	verify := h.Sum32()
+	var checksum uint32
+	if err := binary.Read(rd, binary.BigEndian, &checksum); err != nil {
+		return nil, fmt.Errorf("read checksum: %v", err)
+	}
+	if checksum != verify {
+		return nil, fmt.Errorf("invalid checksum %x and %x", verify, checksum)
+	}
 	return b, nil
-}
-
-func (b *Day) Save(path string) (int, error) {
-	b.mfmu.Lock()
-	defer b.mfmu.Unlock()
-
-	bakpath := fmt.Sprintf("%s.%d.mtfbak", path, b.BaseTime())
-	buf := b.MarshalBinary()
-	if err := ioutil.WriteFile(bakpath, buf, 0777); err != nil {
-		return 0, err
-	}
-	if err := os.Remove(path); err != nil {
-		if !os.IsNotExist(err) {
-			return 0, err
-		}
-	}
-	return len(buf), os.Rename(bakpath, path)
 }
 
 func (b *Day) MarshalBinary() []byte {
 	p := &bytes.Buffer{}
-	p.WriteByte(1)
-	binary.Write(p, binary.BigEndian, b.baseTime)
-	for _, h := range b.hours {
-		h.writeTo(p)
-	}
+	b.Marshal(p)
 	return p.Bytes()
 }
 
-func (b *hourMap) writeTo(buf io.Writer) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (b *Day) Marshal(w io.Writer) (int, error) {
+	w = &meterWriter{Writer: w}
+	w.Write([]byte{1})
+	if err := binary.Write(w, binary.BigEndian, b.baseTime); err != nil {
+		return 0, err
+	}
+	for _, h := range b.hours {
+		if err := h.writeTo(w); err != nil {
+			return 0, err
+		}
+	}
+	return w.(*meterWriter).size, nil
+}
 
-	binary.Write(buf, binary.BigEndian, b.baseTime)
-	binary.Write(buf, binary.BigEndian, b.hashNum)
+func (b *hourMap) writeTo(w io.Writer) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 
-	binary.Write(buf, binary.BigEndian, b.table.GetSerializedSizeInBytes())
-	b.table.WriteTo(buf)
+	h := crc32.NewIEEE()
+	w = io.MultiWriter(w, h)
+	if err := binary.Write(w, binary.BigEndian, b.baseTime); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.BigEndian, b.hashNum); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.BigEndian, b.table.GetSerializedSizeInBytes()); err != nil {
+		return err
+	}
+	if _, err := b.table.WriteTo(w); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.BigEndian, uint32(len(b.keys))); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.BigEndian, b.keys); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.BigEndian, b.maps); err != nil {
+		return err
+	}
+	// Write CRC32 checksum to the end of stream.
+	return binary.Write(w, binary.BigEndian, h.Sum32())
+}
 
-	binary.Write(buf, binary.BigEndian, uint32(len(b.keys)))
-	binary.Write(buf, binary.BigEndian, b.keys)
-	binary.Write(buf, binary.BigEndian, b.maps)
+func (b *Day) RoughSizeBytes() (sz int64) {
+	for i := range b.hours {
+		sz += int64(b.hours[i].table.GetSerializedSizeInBytes())
+		sz += int64(len(b.hours[i].keys)) * 10
+	}
+	return
 }
 
 func (b *Day) String() string {

@@ -106,7 +106,7 @@ func TestBitmap2(t *testing.T) {
 		q = append(q, types.StrHash(k))
 	}
 
-	results := b.Join(q, 0)
+	results := b.Join(q, 0, JoinAll)
 	fmt.Println(len(results))
 	hits, total := 0, map[int64]bool{}
 	for _, res := range results {
