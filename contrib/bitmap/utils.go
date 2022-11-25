@@ -2,6 +2,7 @@ package bitmap
 
 import (
 	"math/bits"
+	"os"
 )
 
 func h16(v uint32, ts int64, deci int) (out [4]uint32) {
@@ -44,29 +45,14 @@ func (kts KeyTimeScore) Unix() int64 {
 	return kts.UnixDeci / 10
 }
 
-// func (br *JoinedResult) Iterate(f func(ts int64, scores int) bool) {
-// 	for i := 23; i >= 0; i-- {
-// 		iter := br.hours[i].m.ReverseIterator()
-// 		for iter.HasNext() {
-// 			v := iter.Next()
-// 			if !f(br.hours[i].baseTime+int64(v), int(br.hours[i].scores[v])) {
-// 				break
-// 			}
-// 		}
-// 	}
-// }
-
-// func (r *JoinedResult) Subtract(r2 *JoinedResult) {
-// 	for i := 23; i >= 0; i-- {
-// 		x := &r.hours[i]
-// 		if x.baseTime != r2.hours[i].baseTime {
-// 			panic("JoinedResult.Subtract: unmatched base time")
-// 		}
-// 		x.m.AndNot(r2.hours[i].m)
-// 		for k := range x.scores {
-// 			if !x.m.Contains(k) {
-// 				delete(x.scores, k)
-// 			}
-// 		}
-// 	}
-// }
+func Load(path string) (*Day, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	return Unmarshal(f)
+}

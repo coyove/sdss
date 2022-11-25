@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -28,6 +30,7 @@ func init() {
 }
 
 type Day struct {
+	mfmu     sync.Mutex
 	baseTime int64
 	hours    [24]*hourMap
 }
@@ -96,7 +99,7 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	for _, v := range vs {
 		h := h16(v, b.baseTime, int(offset%10))
 		for i := 0; i < int(b.hashNum); i++ {
-			b.table.Add(h[i]<<12 | (offset / 10))
+			b.table.Add(h[i]*3600 + (offset / 10))
 		}
 	}
 }
@@ -123,51 +126,48 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 
 	type hashState struct {
 		d int
-		v uint32
 		roaring.Bitmap
 	}
 
 	hashes := map[uint32]*hashState{}
 	hashSort := []uint32{}
+	vsHashes := [][4]uint32{}
 	for _, v := range vs {
 		for d := 0; d < 10; d++ {
 			h := h16(v, b.baseTime, d)
-			s := &hashState{
-				d: d,
-				v: v,
-			}
 			for i := 0; i < int(b.hashNum); i++ {
-				hashes[h[i]] = s
+				hashes[h[i]] = &hashState{d: d}
 				hashSort = append(hashSort, h[i])
 			}
+			vsHashes = append(vsHashes, h)
 		}
 	}
 	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i] < hashSort[j] })
 
-	scores := map[uint32]int{}
 	iter := b.table.Iterator()
 	for _, h := range hashSort {
-		iter.AdvanceIfNeeded(h << 12)
+		iter.AdvanceIfNeeded(h * 3600)
 		for iter.HasNext() {
 			v := iter.Next()
-			if v>>12 != h {
+			if v/3600 != h {
 				break
 			}
-			ts := (v&0xfff)*10 + uint32(hashes[h].d)
+			ts := (v%3600)*10 + uint32(hashes[h].d)
 			hashes[h].Add(ts)
-			scores[ts]++
 		}
 	}
 
-	var final *roaring.Bitmap
-	for _, h := range hashes {
-		if final == nil {
-			final = &h.Bitmap
-		} else {
-			final.Or(&h.Bitmap)
+	scores := map[uint32]int{}
+	final := roaring.New()
+	for i := range vsHashes {
+		raw := vsHashes[i]
+		m := &hashes[raw[0]].Bitmap
+		for i := 1; i < int(b.hashNum); i++ {
+			m.And(&hashes[raw[i]].Bitmap)
 		}
+		m.Iterate(func(x uint32) bool { scores[x]++; return true })
+		final.Or(m)
 	}
-	fmt.Println(final)
 
 	for iter, i := final.Iterator(), 0; iter.HasNext(); {
 		offset := uint16(iter.Next())
@@ -187,9 +187,7 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 	}
 }
 
-func UnmarshalBinary(p []byte) (*Day, error) {
-	rd := bytes.NewReader(p)
-
+func Unmarshal(rd io.Reader) (*Day, error) {
 	var ver byte
 	if err := binary.Read(rd, binary.BigEndian, &ver); err != nil {
 		return nil, fmt.Errorf("read version: %v", err)
@@ -246,6 +244,23 @@ func readHourMap(rd io.Reader) (*hourMap, error) {
 		return nil, fmt.Errorf("read maps: %v", err)
 	}
 	return b, nil
+}
+
+func (b *Day) Save(path string) (int, error) {
+	b.mfmu.Lock()
+	defer b.mfmu.Unlock()
+
+	bakpath := fmt.Sprintf("%s.%d.mtfbak", path, b.BaseTime())
+	buf := b.MarshalBinary()
+	if err := ioutil.WriteFile(bakpath, buf, 0777); err != nil {
+		return 0, err
+	}
+	if err := os.Remove(path); err != nil {
+		if !os.IsNotExist(err) {
+			return 0, err
+		}
+	}
+	return len(buf), os.Rename(bakpath, path)
 }
 
 func (b *Day) MarshalBinary() []byte {

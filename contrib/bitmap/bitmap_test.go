@@ -2,6 +2,7 @@ package bitmap
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io/ioutil"
@@ -51,7 +52,7 @@ func TestBitmap2(t *testing.T) {
 
 	cached, err := ioutil.ReadFile("cache")
 	if len(cached) > 0 {
-		b, err = UnmarshalBinary(cached)
+		b, err = Unmarshal(bytes.NewReader(cached))
 	}
 	fmt.Println(b, err)
 
@@ -61,15 +62,14 @@ func TestBitmap2(t *testing.T) {
 
 	go func() {
 		for {
-			x := b.MarshalBinary()
-			ioutil.WriteFile("cache", x, 0777)
+			b.Save("cache")
 			time.Sleep(time.Second * 10)
 		}
 	}()
 
 	rd := csv.NewReader(f)
 	tso := 0
-	for i := 0; false && i < 2000000; i++ {
+	for i := 0; false && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -97,10 +97,10 @@ func TestBitmap2(t *testing.T) {
 
 	x := b.MarshalBinary()
 	fmt.Println(len(x), b)
-	ioutil.WriteFile("cache", x, 0777)
+	b.Save("cache")
 
 	start := clock.Now()
-	gs := ngram.Split("chinese")
+	gs := ngram.Split("italian noodle")
 	var q []uint32
 	for k := range gs {
 		q = append(q, types.StrHash(k))
@@ -108,7 +108,6 @@ func TestBitmap2(t *testing.T) {
 
 	results := b.Join(q, 0)
 	fmt.Println(len(results))
-	return
 	hits, total := 0, map[int64]bool{}
 	for _, res := range results {
 		line := lineOf(path, int(res.Key))
@@ -154,7 +153,7 @@ func TestBitmap(t *testing.T) {
 	x := b.MarshalBinary()
 	fmt.Println(len(x), time.Since(start))
 
-	b, _ = UnmarshalBinary(x)
+	b, _ = Unmarshal(bytes.NewReader(x))
 	fmt.Println(b, ctr)
 
 }
