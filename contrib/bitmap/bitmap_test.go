@@ -49,11 +49,11 @@ func TestBitmap2(t *testing.T) {
 
 	b := New(now, 2)
 
-	cached, _ := ioutil.ReadFile("cache")
+	cached, err := ioutil.ReadFile("cache")
 	if len(cached) > 0 {
-		b, _ = UnmarshalBinary(cached)
+		b, err = UnmarshalBinary(cached)
 	}
-	fmt.Println(b)
+	fmt.Println(b, err)
 
 	path := os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv"
 	f, _ := os.Open(path)
@@ -68,27 +68,31 @@ func TestBitmap2(t *testing.T) {
 	}()
 
 	rd := csv.NewReader(f)
-	for i := 0; false && i < 1000000; i++ {
+	tso := 0
+	for i := 0; false && i < 2000000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
 		}
 
-		if i < 100000 {
-			continue
-		}
+		// if i < 100000 {
+		// 	continue
+		// }
 
 		line := strings.Join(records, " ")
 		hs := []uint32{}
 		for k := range ngram.Split(string(line)) {
 			hs = append(hs, types.StrHash(k))
 		}
-		b.Add(uint64(i), hs)
+		b.addWithTime(uint64(i), now*10+int64(tso), hs)
 
-		if i%100 == 0 {
-			log.Println(i)
+		if i%1000 == 0 {
+			log.Println(i, b)
 		}
-		time.Sleep(time.Millisecond * 10)
+		if rand.Intn(3) == 0 {
+			tso++
+		}
+		// time.Sleep(time.Millisecond * 10)
 	}
 
 	x := b.MarshalBinary()
@@ -103,6 +107,8 @@ func TestBitmap2(t *testing.T) {
 	}
 
 	results := b.Join(q, 0)
+	fmt.Println(len(results))
+	return
 	hits, total := 0, map[int64]bool{}
 	for _, res := range results {
 		line := lineOf(path, int(res.Key))
