@@ -4,3 +4,4 @@ config.json
 build.sh
 bitmap_cache
 contrib/bitmap/cache
+test
