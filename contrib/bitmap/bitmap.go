@@ -94,9 +94,9 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	b.maps = append(b.maps, uint16(offset))
 
 	for _, v := range vs {
-		h := h16(v, b.baseTime, int(offset%10))
+		h := h16(v, b.baseTime)
 		for i := 0; i < int(b.hashNum); i++ {
-			b.table.Add(h[i]<<12 | (offset / 10))
+			b.table.Add(h[i] + offset)
 		}
 	}
 }
@@ -130,16 +130,14 @@ func (b *hourMap) join(vs []uint32, hr int, res *[]KeyTimeScore) {
 	hashes := map[uint32]*hashState{}
 	hashSort := []uint32{}
 	for _, v := range vs {
-		for d := 0; d < 10; d++ {
-			h := h16(v, b.baseTime, d)
-			s := &hashState{
-				d: d,
-				v: v,
-			}
-			for i := 0; i < int(b.hashNum); i++ {
-				hashes[h[i]] = s
-				hashSort = append(hashSort, h[i])
-			}
+		h := h16(v, b.baseTime, d)
+		s := &hashState{
+			d: d,
+			v: v,
+		}
+		for i := 0; i < int(b.hashNum); i++ {
+			hashes[h[i]] = s
+			hashSort = append(hashSort, h[i])
 		}
 	}
 	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i] < hashSort[j] })

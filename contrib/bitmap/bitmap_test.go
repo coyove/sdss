@@ -47,20 +47,6 @@ func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
 
-	w, _ := Open("test")
-	fmt.Println(w)
-	fmt.Println(w.Get(w.Last()))
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		os.Exit(1)
-	}()
-	for i := 0; i < 100000; i++ {
-		w.Add("zzz", uint64(i), []uint32{1, 2, 3})
-	}
-	w.Close()
-
-	return
-
 	b := New(now, 2)
 
 	cached, _ := ioutil.ReadFile("cache")

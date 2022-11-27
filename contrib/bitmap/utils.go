@@ -4,11 +4,11 @@ import (
 	"math/bits"
 )
 
-func h16(v uint32, ts int64, deci int) (out [4]uint32) {
-	out[0] = combinehash(combinehash(v, uint32(deci)), uint32(ts)) & 0xfffff
-	out[1] = combinehash(v, out[0]) & 0xfffff
-	out[2] = combinehash(v, out[1]) & 0xfffff
-	out[3] = combinehash(v, out[2]) & 0xfffff
+func h16(v uint32, ts int64) (out [4]uint32) {
+	out[0] = combinehash(v, uint32(ts)) & 0xfffffff
+	out[1] = combinehash(v, out[0]) & 0xfffffff
+	out[2] = combinehash(v, out[1]) & 0xfffffff
+	out[3] = combinehash(v, out[2]) & 0xfffffff
 	return
 }
 
