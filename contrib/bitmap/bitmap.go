@@ -15,14 +15,14 @@ import (
 )
 
 const (
-	hour10 = 3600 * 10
+	hour10 = 600 * 10
 	day    = 86400
 )
 
 type Day struct {
 	mfmu     sync.Mutex
 	baseTime int64
-	hours    [24]*hourMap
+	hours    [day * 10 / hour10]*hourMap
 }
 
 func New(baseTime int64, hashNum int8) *Day {
@@ -87,16 +87,16 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	b.maps = append(b.maps, uint16(offset))
 
 	for _, v := range vs {
-		h := h16(v, b.baseTime, int(offset%10))
+		h := h16(v, b.baseTime)
 		for i := 0; i < int(b.hashNum); i++ {
-			b.table.Add(h[i]*3600 + (offset / 10))
+			b.table.Add(h[i] + offset)
 		}
 	}
 }
 
 func (b *Day) Join(hashes []uint32, count int, joinType int) (res []KeyTimeScore) {
-	for i := 23; i >= 0; i-- {
-		b.hours[i].join(hashes, i, joinType, &res)
+	for i := len(b.hours) - 1; i >= 0; i-- {
+		b.hours[i].join(hashes, i, count, joinType, &res)
 		if count > 0 && len(res) >= count {
 			break
 		}
@@ -110,43 +110,62 @@ func (b *Day) Join(hashes []uint32, count int, joinType int) (res []KeyTimeScore
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hr int, joinType int, res *[]KeyTimeScore) {
+func (b *hourMap) join(vs []uint32, hr int, count int, joinType int, res *[]KeyTimeScore) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	type hashState struct {
-		d int
+		h uint32
 		roaring.Bitmap
 	}
 
 	hashes := map[uint32]*hashState{}
-	hashSort := []uint32{}
+	hashSort := []*hashState{}
 	vsHashes := [][4]uint32{}
 	for _, v := range vs {
-		for d := 0; d < 10; d++ {
-			h := h16(v, b.baseTime, d)
-			for i := 0; i < int(b.hashNum); i++ {
-				hashes[h[i]] = &hashState{d: d}
-				hashSort = append(hashSort, h[i])
-			}
-			vsHashes = append(vsHashes, h)
+		h := h16(v, b.baseTime)
+		for i := 0; i < int(b.hashNum); i++ {
+			x := &hashState{h: h[i]}
+			hashes[h[i]] = x
+			hashSort = append(hashSort, x)
 		}
+		vsHashes = append(vsHashes, h)
 	}
-	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i] < hashSort[j] })
+	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i].h < hashSort[j].h })
 
-	iter := b.table.Iterator()
-	for _, h := range hashSort {
-		iter.AdvanceIfNeeded(h * 3600)
+SEARCH:
+	overlapHashes := []*hashState{}
+	for iter := b.table.Iterator(); len(hashSort) > 0; {
+		hs := hashSort[0]
+		h := hs.h
+		hashSort = hashSort[1:]
+
+		iter.AdvanceIfNeeded(h)
 		for iter.HasNext() {
-			v := iter.Next()
-			if v/3600 != h {
+			h2 := iter.PeekNext()
+			if h2-h < hour10 {
+				// The next value (h2), is not only within the [0, 36000) range of current hash,
+				// but also the start of the next hash in 'hashSort'. Dealing 2 hashes together is hard,
+				// so remove the next hash and store it elsewhere. It will be checked in the next round.
+				if len(hashSort) > 0 && h2 == hashSort[0].h {
+					overlapHashes = append(overlapHashes, hashSort[0])
+					hashSort = hashSort[1:]
+				}
+
+				hs.Add(h2 - h)
+				iter.Next()
+			} else {
 				break
 			}
-			ts := (v%3600)*10 + uint32(hashes[h].d)
-			hashes[h].Add(ts)
 		}
 	}
+	if len(overlapHashes) > 0 {
+		// fmt.Println("overlap", hr, overlapHashes)
+		hashSort = overlapHashes
+		goto SEARCH
+	}
 
+	// z := time.Now()
 	scores := map[uint32]int{}
 	final := roaring.New()
 	for i := range vsHashes {
@@ -155,9 +174,16 @@ func (b *hourMap) join(vs []uint32, hr int, joinType int, res *[]KeyTimeScore) {
 		for i := 1; i < int(b.hashNum); i++ {
 			m.And(&hashes[raw[i]].Bitmap)
 		}
-		m.Iterate(func(x uint32) bool { scores[x]++; return true })
-		final.Or(m)
+		if joinType == JoinAll {
+			final.And(m)
+		} else {
+			m.Iterate(func(x uint32) bool { scores[x]++; return true })
+			final.Or(m)
+		}
 	}
+	// if final.GetCardinality() > 0 {
+	// 	fmt.Println(final.GetCardinality(), time.Since(z))
+	// }
 
 	for iter, i := final.Iterator(), 0; iter.HasNext(); {
 		offset := uint16(iter.Next())
@@ -329,7 +355,7 @@ func (b *Day) String() string {
 
 func (b *hourMap) debug(buf io.Writer) {
 	fmt.Fprintf(buf, "[%d;%v] #hash: %d, ",
-		b.baseTime/10, time.Unix(b.baseTime/10, 0).Format("01-02;15"), b.hashNum)
+		b.baseTime/10, time.Unix(b.baseTime/10, 0).Format("01-02;15:04"), b.hashNum)
 	if len(b.keys) > 0 {
 		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d), ",
 			len(b.keys), b.keys[len(b.keys)-1], b.maps[len(b.maps)-1])

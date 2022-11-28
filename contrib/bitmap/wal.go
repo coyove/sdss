@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"path/filepath"
 	"sync"
+	"time"
 
+	"github.com/coyove/common/lru"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/tidwall/wal"
 )
@@ -19,6 +22,10 @@ type WAL struct {
 	log   *wal.Log
 	first uint64
 	index uint64
+
+	cache     *lru.Cache
+	worker    *time.Ticker
+	workerErr error
 }
 
 type WALEntry struct {
@@ -28,7 +35,7 @@ type WALEntry struct {
 	Values    []uint32
 }
 
-func Open(path string) (*WAL, error) {
+func Open(path string, cacheSize int64) (*WAL, error) {
 	log, err := wal.Open(path, nil)
 	if err != nil {
 		return nil, err
@@ -41,18 +48,64 @@ func Open(path string) (*WAL, error) {
 	if err != nil {
 		return nil, err
 	}
+	t := time.NewTicker(time.Second)
 	w := &WAL{
-		log:   log,
-		index: idx,
-		first: first,
-		path:  path,
+		log:    log,
+		index:  idx,
+		first:  first,
+		path:   path,
+		worker: t,
+		cache:  lru.NewCache(cacheSize),
 	}
+	go func() {
+		for range w.worker.C {
+			err := w.Pop(func(m map[string][]WALEntry) (err error) {
+				base := clock.Unix() / day * day
+				for ns, vs := range m {
+					file := filepath.Join(path, fmt.Sprintf("%s_%d", ns, base))
+					m, ok := w.cache.Get(ns)
+					if ok {
+						if m.(*Day).BaseTime() != base {
+							prevFile := filepath.Join(path, fmt.Sprintf("%s_%d", ns, m.(*Day).BaseTime()))
+							if _, err := m.(*Day).Save(prevFile); err != nil {
+								return fmt.Errorf("switch and flush old map %v(%d): %v", ns, m.(*Day).BaseTime(), err)
+							}
+							m = New(base, 2)
+							w.cache.Add(ns, m)
+						}
+					} else {
+						loaded, err := Load(file)
+						if err != nil {
+							return fmt.Errorf("load disk map %v(%d): %v", ns, base, err)
+						}
+						if loaded == nil {
+							loaded = New(base, 2)
+						}
+						w.cache.Add(ns, loaded)
+						m = loaded
+					}
+					for _, v := range vs {
+						m.(*Day).addWithTime(v.Key, v.Timestamp, v.Values)
+					}
+					if _, err := m.(*Day).Save(file); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				w.workerErr = err
+				break
+			}
+		}
+	}()
 	return w, nil
 }
 
 func (w *WAL) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.worker.Stop()
 	if err := w.log.Sync(); err != nil {
 		return err
 	}
@@ -62,6 +115,9 @@ func (w *WAL) Close() error {
 func (w *WAL) Add(ns string, key uint64, v []uint32) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.workerErr != nil {
+		return w.workerErr
+	}
 
 	h := crc32.NewIEEE()
 	buf := &bytes.Buffer{}
@@ -131,15 +187,12 @@ func (w *WAL) Get(index uint64) (WALEntry, error) {
 	return walUnmarshal(buf)
 }
 
-func (w *WAL) Pop(n int, f func(map[string][]WALEntry) error) error {
+func (w *WAL) Pop(f func(map[string][]WALEntry) error) error {
 	w.popmu.Lock()
 	defer w.popmu.Unlock()
 
 	start := w.first
-	end := start + uint64(n) - 1
-	if end > w.index {
-		end = w.index
-	}
+	end := w.index
 
 	data := map[string][]WALEntry{}
 	for i := start; i <= end; i++ {

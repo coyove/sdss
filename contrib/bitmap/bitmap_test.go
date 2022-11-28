@@ -10,7 +10,11 @@ import (
 	"math/rand"
 	"os"
 	"regexp"
+	"runtime"
+	"runtime/pprof"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,32 +23,27 @@ import (
 	"github.com/coyove/sdss/types"
 )
 
-func filterKTS(v []KeyTimeScore, minScore int) []KeyTimeScore {
-	for i := len(v) - 1; i >= 0; i-- {
-		if v[i].Score < minScore {
-			v = append(v[:i], v[i+1:]...)
-		}
-	}
-	return v
-}
+func lineOf(path string, ln []int) (res []string) {
+	sort.Ints(ln)
 
-func lineOf(path string, ln int) string {
 	f, _ := os.Open(path)
 	defer f.Close()
 	rd := bufio.NewReader(f)
-	for i := 0; ; i++ {
+	for i := 0; len(ln) > 0; i++ {
 		line, err := rd.ReadString('\n')
 		if err != nil {
 			break
 		}
-		if i == ln {
-			return strings.TrimSpace(line)
+		if i == ln[0] {
+			res = append(res, strings.TrimSpace(line))
+			ln = ln[1:]
 		}
 	}
-	return ""
+	return
 }
 
 func TestBitmap2(t *testing.T) {
+	runtime.GOMAXPROCS(2)
 	now := clock.Unix() / day * day
 	rand.Seed(now)
 
@@ -69,15 +68,11 @@ func TestBitmap2(t *testing.T) {
 
 	rd := csv.NewReader(f)
 	tso := 0
-	for i := 0; false && i < 10000; i++ {
+	for i := 0; false && i < 1000000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
 		}
-
-		// if i < 100000 {
-		// 	continue
-		// }
 
 		line := strings.Join(records, " ")
 		hs := []uint32{}
@@ -87,7 +82,7 @@ func TestBitmap2(t *testing.T) {
 		b.addWithTime(uint64(i), now*10+int64(tso), hs)
 
 		if i%1000 == 0 {
-			log.Println(i, b)
+			log.Println(i)
 		}
 		if rand.Intn(3) == 0 {
 			tso++
@@ -99,31 +94,63 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(x), b)
 	b.Save("cache")
 
-	start := clock.Now()
+	/*gs := ngram.Split(`Scalloped Corn,"[""1 can cream-style corn"", ""1 can whole kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
+	 together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350 for 1 hour.""]",www.
+	cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""whole kernel corn"", ""crackers"", ""egg"", ""butter"", ""pepper""]"
+	8,Nolan'S Pepper Steak,"[""1 1/2 lb. round steak (1-inch thick), cut into strips"", ""1 can drained tomatoes, cut up (save liquid)"", ""1 3/4 c. water"", ""1/2 c. onions"", ""1 1/2 Tbsp. Worcestershire sauce"",
+	""2 green peppers, diced"", ""1/4 c. oil""]","[""Roll steak strips in flour."", ""Brown in skillet."", ""Salt and pepper."", ""Combine tomato liquid, water, onions and browned steak. Cover and simmer for one and
+	 a quarter hours."", ""Uncover and stir in Worcestershire sauce."", ""Add tomatoes, green peppers and simmer for 5 minutes."", ""Serve over hot cooked rice.""]",www.cookbooks.com/Recipe-Details.aspx?id=375254,Ga
+	thered,"[""tomatoes"", ""water"", ""onions"", ""Worcestershire sauce"", ""green peppers"", ""oil""]"`)*/
 	gs := ngram.Split("italian noodle")
 	var q []uint32
 	for k := range gs {
 		q = append(q, types.StrHash(k))
+		fmt.Println(k, "==>", types.StrHash(k))
+		if len(q) > 32 {
+			break
+		}
 	}
 
-	results := b.Join(q, 0, JoinAll)
-	fmt.Println(len(results))
-	hits, total := 0, map[int64]bool{}
+	{
+		f, _ := os.Create("cpuprofile")
+		defer f.Close()
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
+	start := time.Now()
+	var results []KeyTimeScore
+	wg := sync.WaitGroup{}
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results = b.Join(q, 50, JoinMajor)
+		}()
+	}
+	wg.Wait()
+	fmt.Println(len(results), time.Since(start))
+	hits := 0
+
+	lineNums := []int{}
 	for _, res := range results {
-		line := lineOf(path, int(res.Key))
+		lineNums = append(lineNums, int(res.Key))
+	}
+	lines := lineOf(path, lineNums)
+	for i, line := range lines {
 		s := 0
 		for _, v := range gs {
 			if m, _ := regexp.MatchString("(?i)"+v.Raw, line); m {
 				s++
 			}
 		}
-		if s == len(gs) {
-			fmt.Println(res, line)
+		if s >= len(gs)/2 {
+			// fmt.Println(i, line)
+			_ = i
 			hits++
 		}
-		total[res.UnixDeci] = true
 	}
-	fmt.Println(time.Since(start), hits, len(total))
+	fmt.Println(time.Since(start), hits, len(lines))
 }
 
 func TestBitmap(t *testing.T) {
