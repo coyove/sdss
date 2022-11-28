@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RoaringBitmap/roaring"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/contrib/ngram"
 	"github.com/coyove/sdss/types"
@@ -53,7 +54,7 @@ func TestBitmap2(t *testing.T) {
 	if len(cached) > 0 {
 		b, err = Unmarshal(bytes.NewReader(cached))
 	}
-	fmt.Println(b, err)
+	fmt.Println(err)
 
 	path := os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv"
 	f, _ := os.Open(path)
@@ -68,7 +69,7 @@ func TestBitmap2(t *testing.T) {
 
 	rd := csv.NewReader(f)
 	tso := 0
-	for i := 0; false && i < 1000000; i++ {
+	for i := 0; true && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -121,17 +122,19 @@ func TestBitmap2(t *testing.T) {
 	start := time.Now()
 	var results []KeyTimeScore
 	wg := sync.WaitGroup{}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results = b.Join(q, 50, JoinMajor)
+			// results = b.Join(q, 16695936054, 50, JoinMajor)
+			results = b.Join(q, b.EndTimeDeci(), 50, JoinMajor)
 		}()
 	}
 	wg.Wait()
 	fmt.Println(len(results), time.Since(start))
 	hits := 0
 
+	sort.Slice(results, func(i, j int) bool { return results[i].Key < results[j].Key })
 	lineNums := []int{}
 	for _, res := range results {
 		lineNums = append(lineNums, int(res.Key))
@@ -145,7 +148,7 @@ func TestBitmap2(t *testing.T) {
 			}
 		}
 		if s >= len(gs)/2 {
-			// fmt.Println(i, line)
+			fmt.Println(results[i].Key, int(results[i].UnixDeci), s)
 			_ = i
 			hits++
 		}
@@ -183,4 +186,38 @@ func TestBitmap(t *testing.T) {
 	b, _ = Unmarshal(bytes.NewReader(x))
 	fmt.Println(b, ctr)
 
+}
+
+func TestCollision(t *testing.T) {
+	rand.Seed(clock.Unix())
+	m := roaring.New()
+	verify := map[uint32]*roaring.Bitmap{}
+	for i := 0; i < 1e5; i++ {
+		v := rand.Uint32()
+		h := h16(v, 0)
+
+		x := rand.Perm(hour10)
+		verify[v] = roaring.New()
+		for _, ts := range x[:rand.Intn(10)+10] {
+			m.Add(h[0] + uint32(ts))
+			m.Add(h[1] + uint32(ts))
+			m.Add(h[2] + uint32(ts))
+			verify[v].Add(uint32(ts))
+		}
+	}
+
+	bad, total := 0, 0
+	for v, ts := range verify {
+		h := h16(v, 0)
+		tmp := roaring.New()
+		for i := 0; i < hour10; i++ {
+			if m.Contains(h[0]+uint32(i)) && m.Contains(h[1]+uint32(i)) && m.Contains(h[2]+uint32(i)) {
+				tmp.Add(uint32(i))
+			}
+		}
+		tmp.AndNot(ts)
+		total += int(ts.GetCardinality())
+		bad += int(tmp.GetCardinality())
+	}
+	fmt.Println(bad, total)
 }

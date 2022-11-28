@@ -37,6 +37,14 @@ func (b *Day) BaseTime() int64 {
 	return b.baseTime / 10
 }
 
+func (b *Day) BaseTimeDeci() int64 {
+	return b.baseTime
+}
+
+func (b *Day) EndTimeDeci() int64 {
+	return b.baseTime + 86400*10 - 1
+}
+
 type hourMap struct {
 	mu       sync.RWMutex
 	baseTime int64 // baseTime + 12 bits ts = final timestamp
@@ -94,9 +102,14 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	}
 }
 
-func (b *Day) Join(hashes []uint32, count int, joinType int) (res []KeyTimeScore) {
-	for i := len(b.hours) - 1; i >= 0; i-- {
-		b.hours[i].join(hashes, i, count, joinType, &res)
+func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (res []KeyTimeScore) {
+	startSlot := int((startDeci - b.baseTime) / hour10)
+	for i := startSlot; i >= 0; i-- {
+		startOffset := startDeci - b.hours[i].baseTime + 1
+		if startOffset > hour10 {
+			startOffset = hour10
+		}
+		b.hours[i].join(hashes, i, startOffset, count, joinType, &res)
 		if count > 0 && len(res) >= count {
 			break
 		}
@@ -110,7 +123,7 @@ func (b *Day) Join(hashes []uint32, count int, joinType int) (res []KeyTimeScore
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hr int, count int, joinType int, res *[]KeyTimeScore) {
+func (b *hourMap) join(vs []uint32, hr int, limit int64, count int, joinType int, res *[]KeyTimeScore) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -143,8 +156,8 @@ SEARCH:
 		iter.AdvanceIfNeeded(h)
 		for iter.HasNext() {
 			h2 := iter.PeekNext()
-			if h2-h < hour10 {
-				// The next value (h2), is not only within the [0, 36000) range of current hash,
+			if h2-h < uint32(limit) {
+				// The next value (h2), is not only within the [0, hour10) range of current hash,
 				// but also the start of the next hash in 'hashSort'. Dealing 2 hashes together is hard,
 				// so remove the next hash and store it elsewhere. It will be checked in the next round.
 				if len(hashSort) > 0 && h2 == hashSort[0].h {
@@ -187,6 +200,7 @@ SEARCH:
 
 	for iter, i := final.Iterator(), 0; iter.HasNext(); {
 		offset := uint16(iter.Next())
+		s := int(scores[uint32(offset)])
 		for ; i < len(b.keys); i++ {
 			if b.maps[i] < offset {
 				continue
@@ -194,12 +208,7 @@ SEARCH:
 			if b.maps[i] > offset {
 				break
 			}
-			s := int(scores[uint32(offset)])
 			switch joinType {
-			case JoinAll:
-				if s != len(vs) {
-					continue
-				}
 			case JoinMajor:
 				if s < len(vs)/2 {
 					continue
