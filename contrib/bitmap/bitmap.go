@@ -97,7 +97,8 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	for _, v := range vs {
 		h := h16(v, b.baseTime)
 		for i := 0; i < int(b.hashNum); i++ {
-			b.table.Add(h[i] + offset)
+			b.table.Add(h[i])
+			b.table.Add(h[i] + 1 + offset)
 		}
 	}
 }
@@ -154,10 +155,16 @@ SEARCH:
 		hashSort = hashSort[1:]
 
 		iter.AdvanceIfNeeded(h)
+		if !iter.HasNext() {
+			continue
+		}
+		if iter.Next() != h {
+			continue
+		}
 		for iter.HasNext() {
 			h2 := iter.PeekNext()
-			if h2-h < uint32(limit) {
-				// The next value (h2), is not only within the [0, hour10) range of current hash,
+			if h2-(h+1) < uint32(limit) {
+				// The next value (h2), is not only within the [0, hour10] range of current hash,
 				// but also the start of the next hash in 'hashSort'. Dealing 2 hashes together is hard,
 				// so remove the next hash and store it elsewhere. It will be checked in the next round.
 				if len(hashSort) > 0 && h2 == hashSort[0].h {
@@ -165,7 +172,7 @@ SEARCH:
 					hashSort = hashSort[1:]
 				}
 
-				hs.Add(h2 - h)
+				hs.Add(h2 - (h + 1))
 				iter.Next()
 			} else {
 				break

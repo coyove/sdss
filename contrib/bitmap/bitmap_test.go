@@ -69,7 +69,7 @@ func TestBitmap2(t *testing.T) {
 
 	rd := csv.NewReader(f)
 	tso := 0
-	for i := 0; true && i < 10000; i++ {
+	for i := 0; false && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -95,14 +95,14 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(x), b)
 	b.Save("cache")
 
-	/*gs := ngram.Split(`Scalloped Corn,"[""1 can cream-style corn"", ""1 can whole kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
+	gs := ngram.Split(`Scalloped Corn,"[""1 can cream-style corn"", ""1 can whole kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
 	 together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350 for 1 hour.""]",www.
 	cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""whole kernel corn"", ""crackers"", ""egg"", ""butter"", ""pepper""]"
 	8,Nolan'S Pepper Steak,"[""1 1/2 lb. round steak (1-inch thick), cut into strips"", ""1 can drained tomatoes, cut up (save liquid)"", ""1 3/4 c. water"", ""1/2 c. onions"", ""1 1/2 Tbsp. Worcestershire sauce"",
 	""2 green peppers, diced"", ""1/4 c. oil""]","[""Roll steak strips in flour."", ""Brown in skillet."", ""Salt and pepper."", ""Combine tomato liquid, water, onions and browned steak. Cover and simmer for one and
 	 a quarter hours."", ""Uncover and stir in Worcestershire sauce."", ""Add tomatoes, green peppers and simmer for 5 minutes."", ""Serve over hot cooked rice.""]",www.cookbooks.com/Recipe-Details.aspx?id=375254,Ga
-	thered,"[""tomatoes"", ""water"", ""onions"", ""Worcestershire sauce"", ""green peppers"", ""oil""]"`)*/
-	gs := ngram.Split("italian noodle")
+	thered,"[""tomatoes"", ""water"", ""onions"", ""Worcestershire sauce"", ""green peppers"", ""oil""]"`)
+	// gs := ngram.Split("chinese")
 	var q []uint32
 	for k := range gs {
 		q = append(q, types.StrHash(k))
@@ -192,7 +192,7 @@ func TestCollision(t *testing.T) {
 	rand.Seed(clock.Unix())
 	m := roaring.New()
 	verify := map[uint32]*roaring.Bitmap{}
-	for i := 0; i < 1e5; i++ {
+	for i := 0; i < 2e5; i++ {
 		v := rand.Uint32()
 		h := h16(v, 0)
 
@@ -201,7 +201,7 @@ func TestCollision(t *testing.T) {
 		for _, ts := range x[:rand.Intn(10)+10] {
 			m.Add(h[0] + uint32(ts))
 			m.Add(h[1] + uint32(ts))
-			m.Add(h[2] + uint32(ts))
+			// m.Add(h[2] + uint32(ts))
 			verify[v].Add(uint32(ts))
 		}
 	}
@@ -211,7 +211,7 @@ func TestCollision(t *testing.T) {
 		h := h16(v, 0)
 		tmp := roaring.New()
 		for i := 0; i < hour10; i++ {
-			if m.Contains(h[0]+uint32(i)) && m.Contains(h[1]+uint32(i)) && m.Contains(h[2]+uint32(i)) {
+			if m.Contains(h[0]+uint32(i)) && m.Contains(h[1]+uint32(i)) { // && m.Contains(h[2]+uint32(i)) {
 				tmp.Add(uint32(i))
 			}
 		}

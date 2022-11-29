@@ -25,7 +25,7 @@ func (m *meterWriter) Write(p []byte) (int, error) {
 }
 
 func h16(v uint32, ts int64) (out [4]uint32) {
-	const mask = 0xfffffff
+	const mask = 0xffffffff
 	out[0] = combinehash(v, uint32(ts)) & mask
 	out[1] = combinehash(v, out[0]) & mask
 	out[2] = combinehash(v, out[1]) & mask
