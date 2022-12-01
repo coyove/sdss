@@ -15,51 +15,55 @@ import (
 )
 
 const (
-	hour10 = 600 * 10
+	hour10 = 3600 * 10
 	day    = 86400
 )
 
 type Day struct {
-	mfmu     sync.Mutex
-	baseTime int64
-	hours    [day * 10 / hour10]*hourMap
+	mu        sync.RWMutex
+	mfmu      sync.Mutex
+	baseTime  int64 // rounded to 86400 (1 day)
+	hashNum   int8
+	fastTable *roaring.Bitmap
+	hours     [24]*hourMap
 }
 
 func New(baseTime int64, hashNum int8) *Day {
-	d := &Day{baseTime: baseTime / day * day * 10}
+	d := &Day{
+		baseTime:  baseTime / day * day,
+		hashNum:   hashNum,
+		fastTable: roaring.New(),
+	}
 	for i := range d.hours {
-		d.hours[i] = newHourMap(d.baseTime+hour10*int64(i), hashNum)
+		d.hours[i] = newHourMap(d.baseTime*10+hour10*int64(i), hashNum)
 	}
 	return d
 }
 
 func (b *Day) BaseTime() int64 {
-	return b.baseTime / 10
-}
-
-func (b *Day) BaseTimeDeci() int64 {
 	return b.baseTime
 }
 
+func (b *Day) BaseTimeDeci() int64 {
+	return b.baseTime * 10
+}
+
 func (b *Day) EndTimeDeci() int64 {
-	return b.baseTime + 86400*10 - 1
+	return b.BaseTimeDeci() + 86400*10 - 1
 }
 
 type hourMap struct {
-	mu       sync.RWMutex
-	baseTime int64 // baseTime + 12 bits ts = final timestamp
-	hashNum  int8
-
-	table *roaring.Bitmap // 20 bits hash + 12 bits ts
-	keys  []uint64        // keys
-	maps  []uint16        // key -> ts offset maps
+	mu           sync.RWMutex
+	baseTimeDeci int64           // baseTime + 12 bits ts = final timestamp
+	table        *roaring.Bitmap // 20 bits hash + 12 bits ts
+	keys         []uint64        // keys
+	maps         []uint16        // key -> ts offset maps
 }
 
 func newHourMap(baseTime int64, hashNum int8) *hourMap {
 	m := &hourMap{
-		baseTime: baseTime / hour10 * hour10,
-		hashNum:  hashNum,
-		table:    roaring.New(),
+		baseTimeDeci: baseTime / hour10 * hour10,
+		table:        roaring.New(),
 	}
 	return m
 }
@@ -68,19 +72,20 @@ func (b *Day) Add(key uint64, v []uint32) {
 	b.addWithTime(key, clock.UnixDeci(), v)
 }
 
-func (b *Day) addWithTime(key uint64, ts int64, v []uint32) {
-	b.hours[(ts-b.baseTime)/hour10].add(ts, key, v)
+func (b *Day) addWithTime(key uint64, unixDeci int64, vs []uint32) {
+	b.addFast(unixDeci/10, vs)
+	b.hours[(unixDeci-b.baseTime*10)/hour10].add(unixDeci, key, vs)
 }
 
-func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
+func (b *hourMap) add(unixDeci int64, key uint64, vs []uint32) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if ts-b.baseTime > hour10 || ts < b.baseTime {
-		panic(fmt.Sprintf("invalid timestamp: %v, base: %v", ts, b.baseTime))
+	if unixDeci-b.baseTimeDeci > hour10 || unixDeci < b.baseTimeDeci {
+		panic(fmt.Sprintf("invalid timestamp: %v, base: %v", unixDeci, b.baseTimeDeci))
 	}
 
-	offset := uint32(ts - b.baseTime)
+	offset := uint32(unixDeci - b.baseTimeDeci)
 
 	if len(b.maps) > 0 {
 		// if key <= b.keys[len(b.keys)-1] {
@@ -95,22 +100,32 @@ func (b *hourMap) add(ts int64, key uint64, vs []uint32) {
 	b.maps = append(b.maps, uint16(offset))
 
 	for _, v := range vs {
-		h := h16(v, b.baseTime)
-		for i := 0; i < int(b.hashNum); i++ {
-			b.table.Add(h[i])
-			b.table.Add(h[i] + 1 + offset)
-		}
+		h := h16(v, b.baseTimeDeci)
+		b.table.Add(offset<<16 | h[0]&0xffff)
 	}
 }
 
 func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (res []KeyTimeScore) {
-	startSlot := int((startDeci - b.baseTime) / hour10)
+	fast := b.joinFast(hashes, joinType)
+	startSlot := int((startDeci - b.baseTime*10) / hour10)
 	for i := startSlot; i >= 0; i-- {
-		startOffset := startDeci - b.hours[i].baseTime + 1
+		if fast[i] == 0 {
+			continue
+		}
+		startOffset := startDeci - b.hours[i].baseTimeDeci + 1
 		if startOffset > hour10 {
 			startOffset = hour10
 		}
-		b.hours[i].join(hashes, i, startOffset, count, joinType, &res)
+
+		m := b.hours[i]
+		var hashSort []uint32
+		for _, v := range hashes {
+			h := h16(v, m.baseTimeDeci)
+			hashSort = append(hashSort, h[0]&0xffff)
+		}
+		sort.Slice(hashSort, func(i, j int) bool { return hashSort[i] < hashSort[j] })
+
+		m.join(hashes, hashSort, i, &fast, 0, uint32(startOffset), count, joinType, &res)
 		if count > 0 && len(res) >= count {
 			break
 		}
@@ -124,86 +139,28 @@ func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (r
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hr int, limit int64, count int, joinType int, res *[]KeyTimeScore) {
+func (b *hourMap) join(vs []uint32, hashSort []uint32, hr int, fast *bitmap1440,
+	start, limit uint32, count int, joinType int, res *[]KeyTimeScore) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	type hashState struct {
-		h uint32
-		roaring.Bitmap
-	}
+	scores := map[uint32]int{}
+	final := roaring.New()
 
-	hashes := map[uint32]*hashState{}
-	hashSort := []*hashState{}
-	vsHashes := [][4]uint32{}
-	for _, v := range vs {
-		h := h16(v, b.baseTime)
-		for i := 0; i < int(b.hashNum); i++ {
-			x := &hashState{h: h[i]}
-			hashes[h[i]] = x
-			hashSort = append(hashSort, x)
-		}
-		vsHashes = append(vsHashes, h)
-	}
-	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i].h < hashSort[j].h })
-
-SEARCH:
-	overlapHashes := []*hashState{}
-	for iter := b.table.Iterator(); len(hashSort) > 0; {
-		hs := hashSort[0]
-		h := hs.h
-		hashSort = hashSort[1:]
-
-		iter.AdvanceIfNeeded(h)
-		if !iter.HasNext() {
+	iter := b.table.Iterator()
+	for i := start; i < limit; i++ {
+		if !fast.contains(hr, i) {
 			continue
 		}
-		if iter.Next() != h {
-			continue
-		}
-		for iter.HasNext() {
-			h2 := iter.PeekNext()
-			if h2-(h+1) < uint32(limit) {
-				// The next value (h2), is not only within the [0, hour10] range of current hash,
-				// but also the start of the next hash in 'hashSort'. Dealing 2 hashes together is hard,
-				// so remove the next hash and store it elsewhere. It will be checked in the next round.
-				if len(hashSort) > 0 && h2 == hashSort[0].h {
-					overlapHashes = append(overlapHashes, hashSort[0])
-					hashSort = hashSort[1:]
-				}
-
-				hs.Add(h2 - (h + 1))
-				iter.Next()
-			} else {
-				break
+		for _, hs := range hashSort {
+			x := uint32(i)<<16 | hs
+			iter.AdvanceIfNeeded(x)
+			if iter.HasNext() && iter.PeekNext() == x {
+				final.Add(uint32(i))
+				scores[uint32(i)]++
 			}
 		}
 	}
-	if len(overlapHashes) > 0 {
-		// fmt.Println("overlap", hr, overlapHashes)
-		hashSort = overlapHashes
-		goto SEARCH
-	}
-
-	// z := time.Now()
-	scores := map[uint32]int{}
-	final := roaring.New()
-	for i := range vsHashes {
-		raw := vsHashes[i]
-		m := &hashes[raw[0]].Bitmap
-		for i := 1; i < int(b.hashNum); i++ {
-			m.And(&hashes[raw[i]].Bitmap)
-		}
-		if joinType == JoinAll {
-			final.And(m)
-		} else {
-			m.Iterate(func(x uint32) bool { scores[x]++; return true })
-			final.Or(m)
-		}
-	}
-	// if final.GetCardinality() > 0 {
-	// 	fmt.Println(final.GetCardinality(), time.Since(z))
-	// }
 
 	for iter, i := final.Iterator(), 0; iter.HasNext(); {
 		offset := uint16(iter.Next())
@@ -215,15 +172,12 @@ SEARCH:
 			if b.maps[i] > offset {
 				break
 			}
-			switch joinType {
-			case JoinMajor:
-				if s < len(vs)/2 {
-					continue
-				}
+			if joinType == JoinMajor && s < len(vs)/2 {
+				continue
 			}
 			*res = append(*res, KeyTimeScore{
 				Key:      b.keys[i],
-				UnixDeci: (b.baseTime + int64(b.maps[i])),
+				UnixDeci: (b.baseTimeDeci + int64(b.maps[i])),
 				Score:    s,
 			})
 		}
@@ -231,18 +185,47 @@ SEARCH:
 }
 
 func Unmarshal(rd io.Reader) (*Day, error) {
+	var err error
 	var ver byte
 	if err := binary.Read(rd, binary.BigEndian, &ver); err != nil {
 		return nil, fmt.Errorf("read version: %v", err)
 	}
 
 	b := &Day{}
+	h := crc32.NewIEEE()
+	rd = io.TeeReader(rd, h)
+
 	if err := binary.Read(rd, binary.BigEndian, &b.baseTime); err != nil {
 		return nil, fmt.Errorf("read baseTime: %v", err)
 	}
 
+	if err := binary.Read(rd, binary.BigEndian, &b.hashNum); err != nil {
+		return nil, fmt.Errorf("read hashNum: %v", err)
+	}
+
+	var topSize uint64
+	if err := binary.Read(rd, binary.BigEndian, &topSize); err != nil {
+		return nil, fmt.Errorf("read fast table bitmap size: %v", err)
+	}
+
+	b.fastTable = roaring.New()
+	if _, err := b.fastTable.ReadFrom(io.LimitReader(rd, int64(topSize))); err != nil {
+		return nil, fmt.Errorf("read fast table bitmap: %v", err)
+	}
+
+	verify := h.Sum32()
+	var checksum uint32
+	if err := binary.Read(rd, binary.BigEndian, &checksum); err != nil {
+		return nil, fmt.Errorf("read checksum: %v", err)
+	}
+	if checksum != verify {
+		return nil, fmt.Errorf("invalid fast table checksum %x and %x", verify, checksum)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read fast table: %v", err)
+	}
+
 	for i := range b.hours {
-		var err error
 		b.hours[i], err = readHourMap(rd)
 		if err != nil {
 			return nil, err
@@ -257,13 +240,13 @@ func readHourMap(rd io.Reader) (*hourMap, error) {
 	rd = io.TeeReader(rd, h)
 
 	b := &hourMap{}
-	if err := binary.Read(rd, binary.BigEndian, &b.baseTime); err != nil {
+	if err := binary.Read(rd, binary.BigEndian, &b.baseTimeDeci); err != nil {
 		return nil, fmt.Errorf("read baseTime: %v", err)
 	}
 
-	if err := binary.Read(rd, binary.BigEndian, &b.hashNum); err != nil {
-		return nil, fmt.Errorf("read hashNum: %v", err)
-	}
+	// if err := binary.Read(rd, binary.BigEndian, &b.hashNum); err != nil {
+	// 	return nil, fmt.Errorf("read hashNum: %v", err)
+	// }
 
 	var topSize uint64
 	if err := binary.Read(rd, binary.BigEndian, &topSize); err != nil {
@@ -308,9 +291,25 @@ func (b *Day) MarshalBinary() []byte {
 }
 
 func (b *Day) Marshal(w io.Writer) (int, error) {
-	w = &meterWriter{Writer: w}
-	w.Write([]byte{1})
+	mw := &meterWriter{Writer: w}
+	mw.Write([]byte{1})
+
+	h := crc32.NewIEEE()
+	w = io.MultiWriter(mw, h)
 	if err := binary.Write(w, binary.BigEndian, b.baseTime); err != nil {
+		return 0, err
+	}
+	if err := binary.Write(w, binary.BigEndian, b.hashNum); err != nil {
+		return 0, err
+	}
+	if err := binary.Write(w, binary.BigEndian, b.fastTable.GetSerializedSizeInBytes()); err != nil {
+		return 0, err
+	}
+	if _, err := b.fastTable.WriteTo(w); err != nil {
+		return 0, err
+	}
+	// Write CRC32 checksum to the end of stream.
+	if err := binary.Write(w, binary.BigEndian, h.Sum32()); err != nil {
 		return 0, err
 	}
 	for _, h := range b.hours {
@@ -318,7 +317,7 @@ func (b *Day) Marshal(w io.Writer) (int, error) {
 			return 0, err
 		}
 	}
-	return w.(*meterWriter).size, nil
+	return mw.size, nil
 }
 
 func (b *hourMap) writeTo(w io.Writer) error {
@@ -327,12 +326,12 @@ func (b *hourMap) writeTo(w io.Writer) error {
 
 	h := crc32.NewIEEE()
 	w = io.MultiWriter(w, h)
-	if err := binary.Write(w, binary.BigEndian, b.baseTime); err != nil {
+	if err := binary.Write(w, binary.BigEndian, b.baseTimeDeci); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.BigEndian, b.hashNum); err != nil {
-		return err
-	}
+	// if err := binary.Write(w, binary.BigEndian, b.hashNum); err != nil {
+	// 	return err
+	// }
 	if err := binary.Write(w, binary.BigEndian, b.table.GetSerializedSizeInBytes()); err != nil {
 		return err
 	}
@@ -353,6 +352,7 @@ func (b *hourMap) writeTo(w io.Writer) error {
 }
 
 func (b *Day) RoughSizeBytes() (sz int64) {
+	sz += int64(b.fastTable.GetSerializedSizeInBytes())
 	for i := range b.hours {
 		sz += int64(b.hours[i].table.GetSerializedSizeInBytes())
 		sz += int64(len(b.hours[i].keys)) * 10
@@ -362,6 +362,9 @@ func (b *Day) RoughSizeBytes() (sz int64) {
 
 func (b *Day) String() string {
 	buf := &bytes.Buffer{}
+	fmt.Fprintf(buf, "[%d;%v] fast table: %d (size=%db)\n",
+		b.baseTime, time.Unix(b.baseTime, 0).Format("01-02"),
+		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes())
 	for _, h := range b.hours {
 		h.debug(buf)
 		buf.WriteByte('\n')
@@ -370,8 +373,8 @@ func (b *Day) String() string {
 }
 
 func (b *hourMap) debug(buf io.Writer) {
-	fmt.Fprintf(buf, "[%d;%v] #hash: %d, ",
-		b.baseTime/10, time.Unix(b.baseTime/10, 0).Format("01-02;15:04"), b.hashNum)
+	fmt.Fprintf(buf, "[%d;%v] ",
+		b.baseTimeDeci/10, time.Unix(b.baseTimeDeci/10, 0).Format("15:04"))
 	if len(b.keys) > 0 {
 		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d), ",
 			len(b.keys), b.keys[len(b.keys)-1], b.maps[len(b.maps)-1])
@@ -379,4 +382,115 @@ func (b *hourMap) debug(buf io.Writer) {
 		fmt.Fprintf(buf, "keys: none, ")
 	}
 	fmt.Fprintf(buf, "table: %d (size=%db)", b.table.GetCardinality(), b.table.GetSerializedSizeInBytes())
+}
+
+func (b *Day) addFast(ts int64, vs []uint32) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if ts-b.baseTime > day || ts < b.baseTime {
+		panic(fmt.Sprintf("invalid timestamp: %v, base: %v", ts, b.baseTime))
+	}
+
+	offset := uint32(ts-b.baseTime) / 60
+
+	for _, v := range vs {
+		h := h16(v, b.baseTime)
+		for i := 0; i < int(b.hashNum); i++ {
+			b.fastTable.Add(h[i])
+			b.fastTable.Add(h[i] + 1 + offset)
+		}
+	}
+}
+
+func (b *Day) joinFast(vs []uint32, joinType int) (res bitmap1440) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	type hashState struct {
+		h uint32
+		roaring.Bitmap
+	}
+
+	hashes := map[uint32]*hashState{}
+	hashSort := []*hashState{}
+	vsHashes := [][4]uint32{}
+	for _, v := range vs {
+		h := h16(v, b.baseTime)
+		for i := 0; i < int(b.hashNum); i++ {
+			x := &hashState{h: h[i]}
+			hashes[h[i]] = x
+			hashSort = append(hashSort, x)
+		}
+		vsHashes = append(vsHashes, h)
+	}
+	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i].h < hashSort[j].h })
+
+SEARCH:
+	overlapHashes := []*hashState{}
+	for iter := b.fastTable.Iterator(); len(hashSort) > 0; {
+		hs := hashSort[0]
+		h := hs.h
+		hashSort = hashSort[1:]
+
+		iter.AdvanceIfNeeded(h)
+		if !iter.HasNext() {
+			continue
+		}
+		if iter.Next() != h {
+			continue
+		}
+		for iter.HasNext() {
+			h2 := iter.PeekNext()
+			if h2-(h+1) < 1440 {
+				// The next value (h2), is not only within the [0, 1440] range of current hash,
+				// but also the start of the next hash in 'hashSort'. Dealing 2 hashes together is hard,
+				// so remove the next hash and store it elsewhere. It will be checked in the next round.
+				if len(hashSort) > 0 && h2 == hashSort[0].h {
+					overlapHashes = append(overlapHashes, hashSort[0])
+					hashSort = hashSort[1:]
+				}
+
+				hs.Add(h2 - (h + 1))
+				iter.Next()
+			} else {
+				break
+			}
+		}
+	}
+	if len(overlapHashes) > 0 {
+		// fmt.Println("overlap", hr, overlapHashes)
+		hashSort = overlapHashes
+		goto SEARCH
+	}
+
+	// z := time.Now()
+	scores := map[uint32]int{}
+	final := roaring.New()
+	for i := range vsHashes {
+		raw := vsHashes[i]
+		m := &hashes[raw[0]].Bitmap
+		for i := 1; i < int(b.hashNum); i++ {
+			m.And(&hashes[raw[i]].Bitmap)
+		}
+		if joinType == JoinAll {
+			final.And(m)
+		} else {
+			m.Iterate(func(x uint32) bool { scores[x]++; return true })
+			final.Or(m)
+		}
+	}
+	// if final.GetCardinality() > 0 {
+	// 	fmt.Println(final.GetCardinality(), time.Since(z))
+	// }
+
+	for iter := final.Iterator(); iter.HasNext(); {
+		offset := uint16(iter.Next())
+		s := int(scores[uint32(offset)])
+		if joinType == JoinMajor && s < len(vs)/2 {
+			continue
+		}
+		res.add(offset)
+	}
+	return
 }

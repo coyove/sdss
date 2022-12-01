@@ -1,6 +1,7 @@
 package bitmap
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math/bits"
@@ -66,6 +67,9 @@ func (kts KeyTimeScore) Unix() int64 {
 }
 
 func (b *Day) Save(path string) (int, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	b.mfmu.Lock()
 	defer b.mfmu.Unlock()
 
@@ -99,4 +103,34 @@ func Load(path string) (*Day, error) {
 	}
 	defer f.Close()
 	return Unmarshal(f)
+}
+
+type bitmap1440 [24]uint64
+
+func (b *bitmap1440) add(min uint16) { // [0, 1440)
+	hr := min / 60
+	min = min % 60
+	(*b)[hr] |= 1 << min
+}
+
+func (b *bitmap1440) contains(hr int, secDeci uint32) bool {
+	min := secDeci / 10 / 60
+	return (*b)[hr]&(1<<(min%60)) > 0
+}
+
+func (b bitmap1440) String() string {
+	buf := &bytes.Buffer{}
+	for i := 0; i < 24; i++ {
+		count := 0
+		for m := 0; m < 60; m++ {
+			if b[i]&(1<<m) > 0 {
+				fmt.Fprintf(buf, "%02d:%02d ", i, m)
+				count++
+			}
+		}
+		if count > 0 {
+			buf.WriteString("\n")
+		}
+	}
+	return buf.String()
 }
