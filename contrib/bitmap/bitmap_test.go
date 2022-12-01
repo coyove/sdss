@@ -95,7 +95,7 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(x), b)
 	b.Save("cache")
 
-	gs := ngram.Split("italian noodle")
+	gs := ngram.Split("chinese")
 	if false {
 		gs = ngram.Split(`Scalloped Corn,"[""1 can cream-style corn"", ""1 can whole kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
 	 together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350 for 1 hour.""]",www.
@@ -129,7 +129,7 @@ func TestBitmap2(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			// results = b.Join(q, 16695936054, 50, JoinMajor)
-			results = b.Join(q, b.EndTimeDeci(), 50, JoinMajor)
+			results = b.Join(q, b.EndTimeDeci(), 50, JoinAll)
 		}()
 	}
 	wg.Wait()

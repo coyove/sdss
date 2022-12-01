@@ -67,9 +67,6 @@ func (kts KeyTimeScore) Unix() int64 {
 }
 
 func (b *Day) Save(path string) (int, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	b.mfmu.Lock()
 	defer b.mfmu.Unlock()
 

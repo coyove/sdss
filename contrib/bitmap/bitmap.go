@@ -57,7 +57,7 @@ type hourMap struct {
 	baseTimeDeci int64           // baseTime + 12 bits ts = final timestamp
 	table        *roaring.Bitmap // 20 bits hash + 12 bits ts
 	keys         []uint64        // keys
-	maps         []uint16        // key -> ts offset maps
+	offsets      []uint16        // key -> ts offset maps
 }
 
 func newHourMap(baseTime int64, hashNum int8) *hourMap {
@@ -87,17 +87,17 @@ func (b *hourMap) add(unixDeci int64, key uint64, vs []uint32) {
 
 	offset := uint32(unixDeci - b.baseTimeDeci)
 
-	if len(b.maps) > 0 {
+	if len(b.offsets) > 0 {
 		// if key <= b.keys[len(b.keys)-1] {
 		// 	panic(fmt.Sprintf("invalid key: %016x, last key: %016x", key, b.keys[len(b.keys)-1]))
 		// }
-		if uint16(offset) < b.maps[len(b.maps)-1] {
-			panic(fmt.Sprintf("invalid timestamp: %d, last: %d", offset, b.maps[len(b.keys)-1]))
+		if uint16(offset) < b.offsets[len(b.offsets)-1] {
+			panic(fmt.Sprintf("invalid timestamp: %d, last: %d", offset, b.offsets[len(b.keys)-1]))
 		}
 	}
 
 	b.keys = append(b.keys, key)
-	b.maps = append(b.maps, uint16(offset))
+	b.offsets = append(b.offsets, uint16(offset))
 
 	for _, v := range vs {
 		h := h16(v, b.baseTimeDeci)
@@ -108,6 +108,8 @@ func (b *hourMap) add(unixDeci int64, key uint64, vs []uint32) {
 func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (res []KeyTimeScore) {
 	fast := b.joinFast(hashes, joinType)
 	startSlot := int((startDeci - b.baseTime*10) / hour10)
+	scoresMap := make([]uint8, hour10)
+
 	for i := startSlot; i >= 0; i-- {
 		if fast[i] == 0 {
 			continue
@@ -125,63 +127,109 @@ func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (r
 		}
 		sort.Slice(hashSort, func(i, j int) bool { return hashSort[i] < hashSort[j] })
 
-		m.join(hashes, hashSort, i, &fast, 0, uint32(startOffset), count, joinType, &res)
+		for i := range scoresMap {
+			scoresMap[i] = 0
+		}
+		m.join(scoresMap, hashSort, i, &fast, 0, uint32(startOffset), joinType, count, &res)
 		if count > 0 && len(res) >= count {
 			break
 		}
 	}
-	sort.Slice(res, func(i, j int) bool {
-		if res[i].UnixDeci == res[j].UnixDeci {
-			return res[i].Key > res[j].Key
-		}
-		return res[i].UnixDeci > res[j].UnixDeci
-	})
+	//sort.Slice(res, func(i, j int) bool {
+	//	if res[i].UnixDeci == res[j].UnixDeci {
+	//		return res[i].Key > res[j].Key
+	//	}
+	//	return res[i].UnixDeci > res[j].UnixDeci
+	//})
 	return
 }
 
-func (b *hourMap) join(vs []uint32, hashSort []uint32, hr int, fast *bitmap1440,
-	start, limit uint32, count int, joinType int, res *[]KeyTimeScore) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+func (b *hourMap) join(scoresMap []uint8,
+	hashSort []uint32, hr int, fast *bitmap1440,
+	start, limit uint32, joinType int, count int, res *[]KeyTimeScore) {
 
-	scores := map[uint32]int{}
-	final := roaring.New()
+	var num int
+	if !func() (found bool) {
+		b.mu.RLock()
+		defer b.mu.RUnlock()
 
-	iter := b.table.Iterator()
-	for i := start; i < limit; i++ {
-		if !fast.contains(hr, i) {
-			continue
-		}
-		for _, hs := range hashSort {
-			x := uint32(i)<<16 | hs
-			iter.AdvanceIfNeeded(x)
-			if iter.HasNext() && iter.PeekNext() == x {
-				final.Add(uint32(i))
-				scores[uint32(i)]++
-			}
-		}
-	}
-
-	for iter, i := final.Iterator(), 0; iter.HasNext(); {
-		offset := uint16(iter.Next())
-		s := int(scores[uint32(offset)])
-		for ; i < len(b.keys); i++ {
-			if b.maps[i] < offset {
+		iter := b.table.Iterator()
+		for i := start; i < limit; i++ {
+			if !fast.contains(hr, i) {
 				continue
 			}
-			if b.maps[i] > offset {
+			for _, hs := range hashSort {
+				x := uint32(i)<<16 | hs
+				iter.AdvanceIfNeeded(x)
+				if iter.HasNext() && iter.PeekNext() == x {
+					scoresMap[i]++
+					found = true
+				}
+			}
+		}
+		num = len(b.offsets)
+		return
+	}() {
+		return
+	}
+
+	for i, offset := num-1, len(scoresMap)-1; ; offset-- {
+		for offset > 0 && scoresMap[offset] == 0 {
+			offset--
+		}
+		if offset < 0 {
+			break
+		}
+		s := int(scoresMap[offset])
+		for ; i >= 0; i-- {
+			if b.offsets[i] > uint16(offset) {
+				continue
+			}
+			if b.offsets[i] < uint16(offset) {
 				break
 			}
-			if joinType == JoinMajor && s < len(vs)/2 {
+			if joinType == JoinMajor && s < len(hashSort)/2 {
+				continue
+			}
+			if joinType == JoinAll && s < len(hashSort) {
 				continue
 			}
 			*res = append(*res, KeyTimeScore{
 				Key:      b.keys[i],
-				UnixDeci: (b.baseTimeDeci + int64(b.maps[i])),
+				UnixDeci: (b.baseTimeDeci + int64(b.offsets[i])),
 				Score:    s,
 			})
 		}
+		if len(*res) > count {
+			break
+		}
 	}
+}
+
+func (b *Day) Clone() *Day {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	b2 := &Day{}
+	b2.baseTime = b.baseTime
+	b2.hashNum = b.hashNum
+	b2.fastTable = b.fastTable.Clone()
+	for i := range b2.hours {
+		b2.hours[i] = b.hours[i].clone()
+	}
+	return b2
+}
+
+func (b *hourMap) clone() *hourMap {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	b2 := &hourMap{}
+	b2.baseTimeDeci = b.baseTimeDeci
+	b2.table = b.table.Clone()
+	b2.keys = b.keys
+	b2.offsets = b.offsets
+	return b2
 }
 
 func Unmarshal(rd io.Reader) (*Day, error) {
@@ -268,8 +316,8 @@ func readHourMap(rd io.Reader) (*hourMap, error) {
 		return nil, fmt.Errorf("read keys: %v", err)
 	}
 
-	b.maps = make([]uint16, keysLen)
-	if err := binary.Read(rd, binary.BigEndian, b.maps); err != nil {
+	b.offsets = make([]uint16, keysLen)
+	if err := binary.Read(rd, binary.BigEndian, b.offsets); err != nil {
 		return nil, fmt.Errorf("read maps: %v", err)
 	}
 
@@ -291,6 +339,9 @@ func (b *Day) MarshalBinary() []byte {
 }
 
 func (b *Day) Marshal(w io.Writer) (int, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	mw := &meterWriter{Writer: w}
 	mw.Write([]byte{1})
 
@@ -344,7 +395,7 @@ func (b *hourMap) writeTo(w io.Writer) error {
 	if err := binary.Write(w, binary.BigEndian, b.keys); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.BigEndian, b.maps); err != nil {
+	if err := binary.Write(w, binary.BigEndian, b.offsets); err != nil {
 		return err
 	}
 	// Write CRC32 checksum to the end of stream.
@@ -377,7 +428,7 @@ func (b *hourMap) debug(buf io.Writer) {
 		b.baseTimeDeci/10, time.Unix(b.baseTimeDeci/10, 0).Format("15:04"))
 	if len(b.keys) > 0 {
 		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d), ",
-			len(b.keys), b.keys[len(b.keys)-1], b.maps[len(b.maps)-1])
+			len(b.keys), b.keys[len(b.keys)-1], b.offsets[len(b.offsets)-1])
 	} else {
 		fmt.Fprintf(buf, "keys: none, ")
 	}
@@ -474,7 +525,11 @@ SEARCH:
 			m.And(&hashes[raw[i]].Bitmap)
 		}
 		if joinType == JoinAll {
-			final.And(m)
+			if i == 0 {
+				final = m
+			} else {
+				final.And(m)
+			}
 		} else {
 			m.Iterate(func(x uint32) bool { scores[x]++; return true })
 			final.Or(m)
