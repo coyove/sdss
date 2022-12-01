@@ -122,3 +122,35 @@ func isContinue(r rune) bool {
 	}
 	return true
 }
+
+func isHexString(v string) bool {
+	for _, b := range v {
+		if ('0' <= b && b <= '9') || ('a' <= b && b <= 'f') {
+		} else {
+			return false
+		}
+	}
+	return true
+}
+
+func trigram(v string) (res []string) {
+	orig := v
+	idx := [3]int{0, 0, 0}
+	x := 0
+	for i := 1; len(v) > 0; i++ {
+		r, sz := utf8.DecodeRuneInString(v)
+		if r == utf8.RuneError {
+			break
+		}
+		if i >= 3 {
+			res = append(res, orig[idx[(i-3)%3]:idx[(i-1)%3]+sz])
+		}
+		x += sz
+		idx[i%3] = x
+		v = v[sz:]
+	}
+	if len(res) == 0 {
+		res = append(res, orig)
+	}
+	return
+}

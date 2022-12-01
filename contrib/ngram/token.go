@@ -129,9 +129,17 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 		if len(v) == 1 {
 			return
 		}
+
 		x := lemma(v)
-		s.freq[x]++
-		res[x] = Token{Name: x, Raw: v} //, Quoted: inQuote}
+		if isHexString(x) {
+			for _, x := range trigram(x) {
+				s.freq[x]++
+				res[x] = Token{Name: x, Raw: x}
+			}
+		} else {
+			s.freq[x]++
+			res[x] = Token{Name: x, Raw: v} //, Quoted: inQuote}
+		}
 		s.total++
 		return
 	}
