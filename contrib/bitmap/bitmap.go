@@ -188,7 +188,7 @@ func (b *hourMap) join(scoresMap []uint8,
 			if b.offsets[i] < uint16(offset) {
 				break
 			}
-			if joinType == JoinMajor && s < len(hashSort)/2 {
+			if joinType == JoinMajor && s < majorScore(len(hashSort)) {
 				continue
 			}
 			if joinType == JoinAll && s < len(hashSort) {
@@ -413,26 +413,35 @@ func (b *Day) RoughSizeBytes() (sz int64) {
 
 func (b *Day) String() string {
 	buf := &bytes.Buffer{}
-	fmt.Fprintf(buf, "[%d;%v] fast table: %d (size=%db)\n",
-		b.baseTime, time.Unix(b.baseTime, 0).Format("01-02"),
+	fmt.Fprintf(buf, "[%v] bf hash: %d, fast table: %d (size=%db)\n",
+		time.Unix(b.baseTime, 0).Format("2006-01-02Z07"), b.hashNum,
 		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes())
+	keys, cards := 0, 0
 	for _, h := range b.hours {
-		h.debug(buf)
+		k, c := h.debug(buf)
+		keys += k
+		cards += c
 		buf.WriteByte('\n')
 	}
+	fmt.Fprintf(buf, "[%v] total keys: %d, total hashes: %d",
+		time.Unix(b.baseTime, 0).Format("2006-01-02Z07"), keys, cards)
 	return buf.String()
 }
 
-func (b *hourMap) debug(buf io.Writer) {
+func (b *hourMap) debug(buf io.Writer) (int, int) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	fmt.Fprintf(buf, "[%d;%v] ",
-		b.baseTimeDeci/10, time.Unix(b.baseTimeDeci/10, 0).Format("15:04"))
+		b.baseTimeDeci/10, time.Unix(b.baseTimeDeci/10, 0).Format("15"))
 	if len(b.keys) > 0 {
 		fmt.Fprintf(buf, "keys: %d (last=%016x-->%d), ",
 			len(b.keys), b.keys[len(b.keys)-1], b.offsets[len(b.offsets)-1])
 	} else {
 		fmt.Fprintf(buf, "keys: none, ")
 	}
-	fmt.Fprintf(buf, "table: %d (size=%db)", b.table.GetCardinality(), b.table.GetSerializedSizeInBytes())
+	card := b.table.GetCardinality()
+	fmt.Fprintf(buf, "table: %d (size=%db)", card, b.table.GetSerializedSizeInBytes())
+	return len(b.keys), int(card)
 }
 
 func (b *Day) addFast(ts int64, vs []uint32) {
@@ -470,7 +479,7 @@ func (b *Day) joinFast(vs []uint32, joinType int) (res bitmap1440) {
 		h := h16(v, b.baseTime)
 		for i := 0; i < int(b.hashNum); i++ {
 			x := &hashState{h: h[i]}
-			hashes[h[i]] = x
+			hashes[h[i]] = x // TODO: duplicated hashes
 			hashSort = append(hashSort, x)
 		}
 		vsHashes = append(vsHashes, h)
@@ -542,7 +551,7 @@ SEARCH:
 	for iter := final.Iterator(); iter.HasNext(); {
 		offset := uint16(iter.Next())
 		s := int(scores[uint32(offset)])
-		if joinType == JoinMajor && s < len(vs)/2 {
+		if joinType == JoinMajor && s < majorScore(len(vs)) {
 			continue
 		}
 		res.add(offset)

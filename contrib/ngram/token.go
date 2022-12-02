@@ -131,7 +131,7 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 		}
 
 		x := lemma(v)
-		if isHexString(x) {
+		if isCodeString(x) {
 			for _, x := range trigram(x) {
 				s.freq[x]++
 				res[x] = Token{Name: x, Raw: x}

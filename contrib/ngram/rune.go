@@ -123,14 +123,30 @@ func isContinue(r rune) bool {
 	return true
 }
 
-func isHexString(v string) bool {
+func isCodeString(v string) bool {
+	// Hex string
 	for _, b := range v {
-		if ('0' <= b && b <= '9') || ('a' <= b && b <= 'f') {
+		if ('0' <= b && b <= '9') || ('a' <= b && b <= 'f') || ('A' <= b && b <= 'F') {
 		} else {
-			return false
+			goto BASE64
 		}
 	}
 	return true
+
+	// Base64 string
+BASE64:
+	ups := 0
+	for _, b := range v {
+		if 'A' <= b && b <= 'Z' {
+			ups++
+		}
+	}
+	if len(v) >= 6 && ups >= len(v)/3 {
+		// There are approximately equal-number of upper letters and lower letters
+		// in a base64 string
+		return true
+	}
+	return false
 }
 
 func trigram(v string) (res []string) {

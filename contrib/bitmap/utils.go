@@ -131,3 +131,13 @@ func (b bitmap1440) String() string {
 	}
 	return buf.String()
 }
+
+func majorScore(s int) int {
+	if s <= 2 {
+		return s
+	}
+	if s <= 4 {
+		return s - 1
+	}
+	return s * 4 / 5
+}
