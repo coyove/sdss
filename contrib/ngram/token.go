@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/coyove/sdss/types"
 )
 
 type Token struct {
@@ -23,6 +25,17 @@ func (tok Token) String() string {
 	// 	return fmt.Sprintf("%q(%.3f)", s, tok.Freq)
 	// }
 	return fmt.Sprintf("%s(%.3f)", s, tok.Freq)
+}
+
+func SplitHash(text string) (res map[string]Token, qs []uint32) {
+	if text == "" {
+		return
+	}
+	res = Split(text)
+	for k := range res {
+		qs = append(qs, types.StrHash(k))
+	}
+	return
 }
 
 func Split(text string) (res map[string]Token) {

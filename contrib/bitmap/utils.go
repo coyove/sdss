@@ -141,3 +141,40 @@ func majorScore(s int) int {
 	}
 	return s * 4 / 5
 }
+
+func dedupUint32(qs, musts []uint32) ([]uint32, []uint32) {
+	f1 := func(a []uint32) []uint32 {
+		if len(a) <= 1 {
+			return a
+		}
+		if len(a) == 2 {
+			if a[0] != a[1] {
+				return a
+			}
+			return a[:1]
+		}
+		m := make(map[uint32]struct{}, len(a))
+		for i := len(a) - 1; i >= 0; i-- {
+			if _, ok := m[a[i]]; ok {
+				a = append(a[:i], a[i+1:]...)
+			}
+			m[a[i]] = struct{}{}
+		}
+		return a
+	}
+
+	qs, musts = f1(qs), f1(musts)
+	if len(qs) == 0 || len(musts) == 0 {
+		return qs, musts
+	}
+
+	for i := len(qs) - 1; i >= 0; i-- {
+		for _, v := range musts {
+			if v == qs[i] {
+				qs = append(qs[:i], qs[i+1:]...)
+				break
+			}
+		}
+	}
+	return qs, musts
+}

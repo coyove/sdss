@@ -80,7 +80,7 @@ func TestBitmap2(t *testing.T) {
 		for k := range ngram.Split(string(line)) {
 			hs = append(hs, types.StrHash(k))
 		}
-		b.addWithTime(uint64(i), now*10+int64(tso), hs)
+		b.AddWithTime(uint64(i), now*10+int64(tso), hs)
 
 		if i%1000 == 0 {
 			log.Println(i)
@@ -95,7 +95,7 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(x), b)
 	b.Save("cache")
 
-	gs := ngram.Split("chinese")
+	gs := ngram.Split("chinese noodle")
 	if false {
 		gs = ngram.Split(`Scalloped Corn,"[""1 can cream-style corn"", ""1 can whole kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
 	 together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350 for 1 hour.""]",www.
@@ -129,7 +129,7 @@ func TestBitmap2(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			// results = b.Join(q, 16695936054, 50, JoinMajor)
-			results = b.Join(q, b.EndTimeDeci(), 50, JoinAll)
+			results = b.Join(nil, q, b.EndTimeDeci(), 50, JoinAll)
 		}()
 	}
 	wg.Wait()
@@ -150,7 +150,7 @@ func TestBitmap2(t *testing.T) {
 			}
 		}
 		if s >= len(gs)/2 {
-			// fmt.Println(results[i].Key, int(results[i].UnixDeci), s)
+			fmt.Println(results[i].Key, int(results[i].UnixDeci), s, line)
 			_ = i
 			hits++
 		}
@@ -172,7 +172,7 @@ func TestBitmap(t *testing.T) {
 		}
 		for i := 0; i < N; i++ {
 			v := rand.Uint32()
-			b.addWithTime(uint64(t*100000+i), now*10+int64(t), []uint32{v})
+			b.AddWithTime(uint64(t*100000+i), now*10+int64(t), []uint32{v})
 			ctr++
 			store = append(store, v)
 		}

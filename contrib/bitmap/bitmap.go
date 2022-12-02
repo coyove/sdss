@@ -68,21 +68,21 @@ func newHourMap(baseTime int64, hashNum int8) *hourMap {
 	return m
 }
 
-func (b *Day) Add(key uint64, v []uint32) {
-	b.addWithTime(key, clock.UnixDeci(), v)
+func (b *Day) Add(key uint64, v []uint32) error {
+	return b.AddWithTime(key, clock.UnixDeci(), v)
 }
 
-func (b *Day) addWithTime(key uint64, unixDeci int64, vs []uint32) {
+func (b *Day) AddWithTime(key uint64, unixDeci int64, vs []uint32) error {
 	b.addFast(unixDeci/10, vs)
-	b.hours[(unixDeci-b.baseTime*10)/hour10].add(unixDeci, key, vs)
+	return b.hours[(unixDeci-b.baseTime*10)/hour10].add(unixDeci, key, vs)
 }
 
-func (b *hourMap) add(unixDeci int64, key uint64, vs []uint32) {
+func (b *hourMap) add(unixDeci int64, key uint64, vs []uint32) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if unixDeci-b.baseTimeDeci > hour10 || unixDeci < b.baseTimeDeci {
-		panic(fmt.Sprintf("invalid timestamp: %v, base: %v", unixDeci, b.baseTimeDeci))
+		return fmt.Errorf("invalid timestamp: %v, base: %v", unixDeci, b.baseTimeDeci)
 	}
 
 	offset := uint32(unixDeci - b.baseTimeDeci)
@@ -92,7 +92,8 @@ func (b *hourMap) add(unixDeci int64, key uint64, vs []uint32) {
 		// 	panic(fmt.Sprintf("invalid key: %016x, last key: %016x", key, b.keys[len(b.keys)-1]))
 		// }
 		if uint16(offset) < b.offsets[len(b.offsets)-1] {
-			panic(fmt.Sprintf("invalid timestamp: %d, last: %d", offset, b.offsets[len(b.keys)-1]))
+			return fmt.Errorf("invalid timestamp: %d, last: %d",
+				b.baseTimeDeci+int64(offset), b.baseTimeDeci+int64(b.offsets[len(b.keys)-1]))
 		}
 	}
 
@@ -103,10 +104,13 @@ func (b *hourMap) add(unixDeci int64, key uint64, vs []uint32) {
 		h := h16(v, b.baseTimeDeci)
 		b.table.Add(offset<<16 | h[0]&0xffff)
 	}
+	return nil
 }
 
-func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (res []KeyTimeScore) {
-	fast := b.joinFast(hashes, joinType)
+func (b *Day) Join(qs, musts []uint32, startDeci int64, count int, joinType int) (res []KeyTimeScore) {
+	qs, musts = dedupUint32(qs, musts)
+	fast := b.joinFast(qs, musts, joinType)
+
 	startSlot := int((startDeci - b.baseTime*10) / hour10)
 	scoresMap := make([]uint8, hour10)
 
@@ -121,16 +125,22 @@ func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (r
 
 		m := b.hours[i]
 		var hashSort []uint32
-		for _, v := range hashes {
+		var mustHashSort []uint32
+		for _, v := range qs {
 			h := h16(v, m.baseTimeDeci)
 			hashSort = append(hashSort, h[0]&0xffff)
 		}
+		for _, v := range musts {
+			h := h16(v, m.baseTimeDeci)
+			mustHashSort = append(mustHashSort, h[0]&0xffff)
+		}
 		sort.Slice(hashSort, func(i, j int) bool { return hashSort[i] < hashSort[j] })
+		sort.Slice(mustHashSort, func(i, j int) bool { return mustHashSort[i] < mustHashSort[j] })
 
 		for i := range scoresMap {
 			scoresMap[i] = 0
 		}
-		m.join(scoresMap, hashSort, i, &fast, 0, uint32(startOffset), joinType, count, &res)
+		m.join(scoresMap, hashSort, mustHashSort, i, &fast, uint32(startOffset), joinType, count, &res)
 		if count > 0 && len(res) >= count {
 			break
 		}
@@ -145,8 +155,8 @@ func (b *Day) Join(hashes []uint32, startDeci int64, count int, joinType int) (r
 }
 
 func (b *hourMap) join(scoresMap []uint8,
-	hashSort []uint32, hr int, fast *bitmap1440,
-	start, limit uint32, joinType int, count int, res *[]KeyTimeScore) {
+	hashSort, mustHashSort []uint32, hr int, fast *bitmap1440,
+	limit uint32, joinType int, count int, res *[]KeyTimeScore) {
 
 	var num int
 	if !func() (found bool) {
@@ -154,7 +164,7 @@ func (b *hourMap) join(scoresMap []uint8,
 		defer b.mu.RUnlock()
 
 		iter := b.table.Iterator()
-		for i := start; i < limit; i++ {
+		for i := uint32(0); i < limit; i++ {
 			if !fast.contains(hr, i) {
 				continue
 			}
@@ -164,6 +174,25 @@ func (b *hourMap) join(scoresMap []uint8,
 				if iter.HasNext() && iter.PeekNext() == x {
 					scoresMap[i]++
 					found = true
+				}
+			}
+		}
+
+		if len(mustHashSort) > 0 {
+			iter := b.table.Iterator()
+			for i := uint32(0); i < limit; i++ {
+				if !fast.contains(hr, i) {
+					continue
+				}
+				for _, hs := range mustHashSort {
+					x := uint32(i)<<16 | hs
+					iter.AdvanceIfNeeded(x)
+					if iter.HasNext() && iter.PeekNext() == x {
+						scoresMap[i]++
+						found = true
+					} else {
+						scoresMap[i] = 0
+					}
 				}
 			}
 		}
@@ -188,10 +217,10 @@ func (b *hourMap) join(scoresMap []uint8,
 			if b.offsets[i] < uint16(offset) {
 				break
 			}
-			if joinType == JoinMajor && s < majorScore(len(hashSort)) {
+			if joinType == JoinMajor && s < majorScore(len(hashSort))+len(mustHashSort) {
 				continue
 			}
-			if joinType == JoinAll && s < len(hashSort) {
+			if joinType == JoinAll && s < len(hashSort)+len(mustHashSort) {
 				continue
 			}
 			*res = append(*res, KeyTimeScore{
@@ -463,7 +492,7 @@ func (b *Day) addFast(ts int64, vs []uint32) {
 	}
 }
 
-func (b *Day) joinFast(vs []uint32, joinType int) (res bitmap1440) {
+func (b *Day) joinFast(qs, musts []uint32, joinType int) (res bitmap1440) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -472,17 +501,29 @@ func (b *Day) joinFast(vs []uint32, joinType int) (res bitmap1440) {
 		roaring.Bitmap
 	}
 
-	hashes := map[uint32]*hashState{}
-	hashSort := []*hashState{}
-	vsHashes := [][4]uint32{}
-	for _, v := range vs {
+	hashStates := map[uint32]*hashState{}
+	var hashSort []*hashState
+	var qsHashes [][4]uint32
+	var mustHashes [][4]uint32
+
+	for _, v := range musts {
 		h := h16(v, b.baseTime)
 		for i := 0; i < int(b.hashNum); i++ {
 			x := &hashState{h: h[i]}
-			hashes[h[i]] = x // TODO: duplicated hashes
+			hashStates[h[i]] = x // TODO: duplicated hashes
 			hashSort = append(hashSort, x)
 		}
-		vsHashes = append(vsHashes, h)
+		mustHashes = append(mustHashes, h)
+	}
+
+	for _, v := range qs {
+		h := h16(v, b.baseTime)
+		for i := 0; i < int(b.hashNum); i++ {
+			x := &hashState{h: h[i]}
+			hashStates[h[i]] = x
+			hashSort = append(hashSort, x)
+		}
+		qsHashes = append(qsHashes, h)
 	}
 	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i].h < hashSort[j].h })
 
@@ -527,11 +568,11 @@ SEARCH:
 	// z := time.Now()
 	scores := map[uint32]int{}
 	final := roaring.New()
-	for i := range vsHashes {
-		raw := vsHashes[i]
-		m := &hashes[raw[0]].Bitmap
+	for i := range qsHashes {
+		raw := qsHashes[i]
+		m := &hashStates[raw[0]].Bitmap
 		for i := 1; i < int(b.hashNum); i++ {
-			m.And(&hashes[raw[i]].Bitmap)
+			m.And(&hashStates[raw[i]].Bitmap)
 		}
 		if joinType == JoinAll {
 			if i == 0 {
@@ -544,14 +585,25 @@ SEARCH:
 			final.Or(m)
 		}
 	}
-	// if final.GetCardinality() > 0 {
-	// 	fmt.Println(final.GetCardinality(), time.Since(z))
-	// }
+
+	for i := range mustHashes {
+		raw := mustHashes[i]
+		m := &hashStates[raw[0]].Bitmap
+		for i := 1; i < int(b.hashNum); i++ {
+			m.And(&hashStates[raw[i]].Bitmap)
+		}
+		m.Iterate(func(x uint32) bool { scores[x]++; return true })
+		if len(qsHashes) == 0 && i == 0 {
+			final = m
+		} else {
+			final.And(m)
+		}
+	}
 
 	for iter := final.Iterator(); iter.HasNext(); {
 		offset := uint16(iter.Next())
 		s := int(scores[uint32(offset)])
-		if joinType == JoinMajor && s < majorScore(len(vs)) {
+		if joinType == JoinMajor && s < majorScore(len(qs))+len(musts) {
 			continue
 		}
 		res.add(offset)
