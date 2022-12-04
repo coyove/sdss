@@ -34,6 +34,10 @@ func h16(v uint32, ts int64) (out [4]uint32) {
 	return
 }
 
+func h32(index uint32, hash uint32) (out uint32) {
+	return index<<17 | hash&0x1ffff
+}
+
 func combinehash(k1, seed uint32) uint32 {
 	h1 := seed
 
@@ -57,20 +61,16 @@ func combinehash(k1, seed uint32) uint32 {
 }
 
 type KeyTimeScore struct {
-	Key      uint64
-	UnixDeci int64
-	Score    int
-}
-
-func (kts KeyTimeScore) Unix() int64 {
-	return kts.UnixDeci / 10
+	Key   uint64
+	Id    int64
+	Score int
 }
 
 func (b *Day) Save(path string) (int, error) {
 	b.mfmu.Lock()
 	defer b.mfmu.Unlock()
 
-	bakpath := fmt.Sprintf("%s.%d.mtfbak", path, b.BaseTime())
+	bakpath := fmt.Sprintf("%s.%d.mtfbak", path, b.Start())
 
 	f, err := os.Create(bakpath)
 	if err != nil {
@@ -102,33 +102,24 @@ func Load(path string) (*Day, error) {
 	return Unmarshal(f)
 }
 
-type bitmap1440 [24]uint64
+type bitmap1440 [fastSlotNum / 16]uint16
 
-func (b *bitmap1440) add(min uint16) { // [0, 1440)
-	hr := min / 60
-	min = min % 60
-	(*b)[hr] |= 1 << min
+func (b *bitmap1440) add(index uint16) { // [0, fastSlotNum)
+	(*b)[index/16] |= 1 << (index % 16)
 }
 
-func (b *bitmap1440) contains(hr int, secDeci uint32) bool {
-	min := secDeci / 10 / 60
-	return (*b)[hr]&(1<<(min%60)) > 0
+func (b *bitmap1440) contains(index uint16) bool {
+	return (*b)[index/16]&(1<<(index%16)) > 0
 }
 
 func (b bitmap1440) String() string {
-	buf := &bytes.Buffer{}
-	for i := 0; i < 24; i++ {
-		count := 0
-		for m := 0; m < 60; m++ {
-			if b[i]&(1<<m) > 0 {
-				fmt.Fprintf(buf, "%02d:%02d ", i, m)
-				count++
-			}
-		}
-		if count > 0 {
-			buf.WriteString("\n")
+	buf := bytes.NewBufferString("{fast bitmap")
+	for i := 0; i < fastSlotNum; i++ {
+		if b.contains(uint16(i)) {
+			fmt.Fprintf(buf, " %d", i)
 		}
 	}
+	buf.WriteString("}")
 	return buf.String()
 }
 
@@ -142,8 +133,8 @@ func majorScore(s int) int {
 	return s * 4 / 5
 }
 
-func dedupUint32(qs, musts []uint32) ([]uint32, []uint32) {
-	f1 := func(a []uint32) []uint32 {
+func dedupUint32(qs, musts []uint64) ([]uint64, []uint64) {
+	f1 := func(a []uint64) []uint64 {
 		if len(a) <= 1 {
 			return a
 		}
@@ -153,7 +144,7 @@ func dedupUint32(qs, musts []uint32) ([]uint32, []uint32) {
 			}
 			return a[:1]
 		}
-		m := make(map[uint32]struct{}, len(a))
+		m := make(map[uint64]struct{}, len(a))
 		for i := len(a) - 1; i >= 0; i-- {
 			if _, ok := m[a[i]]; ok {
 				a = append(a[:i], a[i+1:]...)

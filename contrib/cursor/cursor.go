@@ -16,9 +16,10 @@ var (
 )
 
 type Cursor struct {
-	Next  int64
-	count int64
-	bf    [3]*bloom.BloomFilter
+	NextMap int64
+	NextId  int64
+	count   int64
+	bf      [3]*bloom.BloomFilter
 }
 
 func Parse(v string) (*Cursor, bool) {
@@ -56,7 +57,10 @@ func Parse(v string) (*Cursor, bool) {
 
 	// rd := ascii85.NewDecoder(bytes.NewReader(tmp))
 	c := &Cursor{}
-	if err := binary.Read(rd, binary.BigEndian, &c.Next); err != nil {
+	if err := binary.Read(rd, binary.BigEndian, &c.NextMap); err != nil {
+		return nil, false
+	}
+	if err := binary.Read(rd, binary.BigEndian, &c.NextId); err != nil {
 		return nil, false
 	}
 	if err := binary.Read(rd, binary.BigEndian, &c.count); err != nil {
@@ -102,7 +106,7 @@ func (c *Cursor) Contains(key string) bool {
 }
 
 func (c *Cursor) GoString() string {
-	x := fmt.Sprintf("next: %x, count: %d", c.Next, c.count)
+	x := fmt.Sprintf("next: %x-%x, count: %d", c.NextMap, c.NextId, c.count)
 	for i, bf := range c.bf {
 		x += fmt.Sprintf(", b%d: %d", i, bf.ApproximatedSize())
 	}
@@ -112,7 +116,8 @@ func (c *Cursor) GoString() string {
 func (c *Cursor) String() string {
 	buf := &bytes.Buffer{}
 	out := base64.NewEncoder(base64.URLEncoding, buf)
-	binary.Write(out, binary.BigEndian, c.Next)
+	binary.Write(out, binary.BigEndian, c.NextMap)
+	binary.Write(out, binary.BigEndian, c.NextId)
 	binary.Write(out, binary.BigEndian, c.count)
 
 	for _, bf := range c.bf {

@@ -27,7 +27,7 @@ func (tok Token) String() string {
 	return fmt.Sprintf("%s(%.3f)", s, tok.Freq)
 }
 
-func SplitHash(text string) (res map[string]Token, qs []uint32) {
+func SplitHash(text string) (res map[string]Token, qs []uint64) {
 	if text == "" {
 		return
 	}

@@ -31,13 +31,13 @@ func (doc *Document) String() string {
 	return fmt.Sprintf("%d(%s): %q", doc.CreateTime(), doc.Id, doc.Content)
 }
 
-func StrHash(s string) uint32 {
-	const offset32 = 2166136261
-	const prime32 = 16777619
-	var hash uint32 = offset32
+func StrHash(s string) uint64 {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	var hash uint64 = offset64
 	for i := 0; i < len(s); i++ {
-		hash *= prime32
-		hash ^= uint32(s[i])
+		hash *= prime64
+		hash ^= uint64(s[i])
 	}
-	return hash
+	return uint64(hash)
 }
