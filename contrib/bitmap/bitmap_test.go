@@ -206,10 +206,33 @@ func TestCollision(t *testing.T) {
 }
 
 func BenchmarkXor(b *testing.B) {
+	{
+		z := []uint64{}
+		d := map[uint64]bool{}
+		rand.Seed(clock.Unix())
+		for i := 0; i < 1e4; i++ {
+			v := rand.Uint64()
+			z = append(z, v)
+			d[v] = true
+		}
+		f := xfBuild(xfNew(z))
+		for i := 0; i < 1e5; i++ {
+			v := rand.Uint64()
+			if d[v] {
+				continue
+			}
+			if f.Contains(v) {
+				panic(i)
+			}
+		}
+		fmt.Println(z, types.StrHash("shit"))
+		return
+	}
+
 	var x []uint64
 	var dedup = map[uint64]bool{}
 	rand.Seed(clock.Unix())
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10; i++ {
 		v := rand.Uint64()
 		if dedup[v] {
 			continue
@@ -218,7 +241,7 @@ func BenchmarkXor(b *testing.B) {
 		dedup[v] = true
 	}
 	zzz := xfNew(x)
-	fmt.Println(len(zzz))
+	fmt.Println(len(zzz), len(xfNew2(x)))
 	for i := 0; i < b.N; i++ {
 		xfBuild(zzz)
 	}

@@ -26,7 +26,7 @@ var bm struct {
 }
 
 type NSBitmap struct {
-	*bitmap.Day
+	*bitmap.Range
 	ns      string
 	unixStr string
 }

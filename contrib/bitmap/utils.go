@@ -66,7 +66,7 @@ type KeyTimeScore struct {
 	Score int
 }
 
-func (b *Day) Save(path string) (int, error) {
+func (b *Range) Save(path string) (int, error) {
 	b.mfmu.Lock()
 	defer b.mfmu.Unlock()
 
@@ -90,7 +90,7 @@ func (b *Day) Save(path string) (int, error) {
 	return sz, os.Rename(bakpath, path)
 }
 
-func Load(path string) (*Day, error) {
+func Load(path string) (*Range, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -133,7 +133,7 @@ func majorScore(s int) int {
 	return s * 4 / 5
 }
 
-func dedupUint32(qs, musts []uint64) ([]uint64, []uint64) {
+func dedupUint64(qs, musts []uint64) ([]uint64, []uint64) {
 	f1 := func(a []uint64) []uint64 {
 		if len(a) <= 1 {
 			return a
