@@ -101,7 +101,12 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(x), b)
 	b.Save("cache")
 
-	gs := ngram.Split("chinese")
+	b.end = 1044
+	_, zzz := ngram.SplitHash("lebih asik yg menantang.")
+	fmt.Println(zzz)
+	b.Add(1234567890, zzz)
+
+	gs := ngram.Split("fuck")
 	if false {
 		gs = ngram.Split(`kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
  together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350\u00b0 for 1 hour.""]",www.

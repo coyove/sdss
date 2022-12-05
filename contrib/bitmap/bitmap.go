@@ -86,6 +86,14 @@ func (b *Day) Add(key uint64, v []uint64) {
 }
 
 func (b *Day) Join(qs, musts []uint64, start int64, count int, joinType int) (res []KeyTimeScore) {
+	// zzz, _ := ngram.SplitHash(`生活不是要找到自己。生活的真正意义就是塑造自己。对着镜子微笑，每天早上都这样做，你会开始看到生活中的巨大变化。
+	// 就是承担有计划的风险。如果你不冒任何风险，你就会冒一切风险。保持专注，敢于面对恐惧。你只活一次。`)
+	// xxx := b.Find(7173385177240427009)
+	// for k, _ := range zzz {
+	// 	fmt.Println(k, xxx(types.StrHash(k)))
+	// }
+	// fmt.Println(xxx(types.StrHash("fuck")))
+
 	qs, musts = dedupUint32(qs, musts)
 	fast := b.joinFast(qs, musts, joinType)
 
@@ -514,4 +522,19 @@ SEARCH:
 		res.add(offset)
 	}
 	return
+}
+
+func (b *Day) Find(key uint64) func(uint64) bool {
+	for _, m := range b.hours {
+		m.mu.Lock()
+		for i, k := range m.keys {
+			if k == key {
+				x := xfBuild(m.xfs[m.prevSpan(int64(i)):m.spans[i]])
+				m.mu.Unlock()
+				return x.Contains
+			}
+		}
+		m.mu.Unlock()
+	}
+	return nil
 }
