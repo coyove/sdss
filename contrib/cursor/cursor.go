@@ -5,13 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/bits-and-blooms/bloom/v3"
 )
 
 var (
-	Count         = 200
+	Count         = 256
 	FalsePositive = 0.001
 )
 
@@ -19,43 +20,22 @@ type Cursor struct {
 	NextMap int64
 	NextId  int64
 	count   int64
-	bf      [3]*bloom.BloomFilter
+	bf      [16]*bloom.BloomFilter
+}
+
+func New() *Cursor {
+	c := &Cursor{}
+	for i := range c.bf {
+		c.bf[i] = bloom.NewWithEstimates(uint(Count), FalsePositive)
+	}
+	return c
 }
 
 func Parse(v string) (*Cursor, bool) {
-	if v == "" {
-		c := &Cursor{}
-		for i := range c.bf {
-			c.bf[i] = bloom.NewWithEstimates(uint(Count), FalsePositive)
-		}
-		return c, true
-	}
+	return Read(base64.NewDecoder(base64.URLEncoding, strings.NewReader(v)))
+}
 
-	tmp := []byte(v)
-	for i := len(tmp) - 1; i >= 0; i-- {
-		idx := strings.IndexByte(compressA, tmp[i])
-		if idx >= 0 {
-			count := idx + 2
-			tmp = append(tmp, decompressA[:count-1]...)
-			copy(tmp[i+count:], tmp[i+1:])
-			copy(tmp[i:], decompressA[:count])
-		}
-	}
-	// fmt.Println(string(tmp))
-
-	rd := base64.NewDecoder(base64.URLEncoding, bytes.NewReader(tmp))
-	// for i, c := range tmp {
-	// 	switch c {
-	// 	case '{':
-	// 		tmp[i] = '\''
-	// 	case '}':
-	// 		tmp[i] = '"'
-	// 	case '|':
-	// 		tmp[i] = '\\'
-	// 	}
-	// }
-
-	// rd := ascii85.NewDecoder(bytes.NewReader(tmp))
+func Read(rd io.Reader) (*Cursor, bool) {
 	c := &Cursor{}
 	if err := binary.Read(rd, binary.BigEndian, &c.NextMap); err != nil {
 		return nil, false
@@ -81,7 +61,7 @@ func Parse(v string) (*Cursor, bool) {
 			return nil, false
 		}
 	}
-	return c, false
+	return c, true
 }
 
 func (c *Cursor) Add(key string) {
@@ -113,9 +93,8 @@ func (c *Cursor) GoString() string {
 	return x
 }
 
-func (c *Cursor) String() string {
-	buf := &bytes.Buffer{}
-	out := base64.NewEncoder(base64.URLEncoding, buf)
+func (c *Cursor) MarshalBinary() []byte {
+	out := &bytes.Buffer{}
 	binary.Write(out, binary.BigEndian, c.NextMap)
 	binary.Write(out, binary.BigEndian, c.NextId)
 	binary.Write(out, binary.BigEndian, c.count)
@@ -126,43 +105,10 @@ func (c *Cursor) String() string {
 		binary.Write(out, binary.BigEndian, a)
 	}
 
-	out.Close()
-	// old := buf.String()
-	res := buf.Bytes()
-
-	for i := len(res) - 1; i >= 0; {
-		if res[i] == 'A' {
-			count := 1
-			j := i - 1
-			for ; j >= 0; j-- {
-				if res[j] == 'A' {
-					count++
-					if count < 12 {
-						continue
-					}
-				} else {
-					j++
-				}
-				break
-			}
-			if j < 0 {
-				j = 0
-			}
-			if count > 1 {
-				res[j] = compressA[count-2]
-				res = append(res[:j+1], res[i+1:]...)
-				i = j - 1
-				continue
-			}
-		}
-		i--
-	}
-
-	// fmt.Println(old)
-	return string(res) // buf.String()
+	return out.Bytes()
 }
 
-const (
-	compressA   = ".~()'!*:@,;"
-	decompressA = "AAAAAAAAAAAAAAA"
-)
+// old := buf.String()
+func (c *Cursor) String() string {
+	return base64.URLEncoding.EncodeToString(c.MarshalBinary())
+}
