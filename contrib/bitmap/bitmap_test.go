@@ -75,7 +75,7 @@ func TestBitmap2(t *testing.T) {
 
 	rd := csv.NewReader(f)
 	tso := 0
-	for i := 0; false && i < 1000; i++ {
+	for i := 0; false && i < 100000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -101,13 +101,8 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(x), b)
 	b.Save("cache")
 
-	b.end = 1044
-	_, zzz := ngram.SplitHash("lebih asik yg menantang.")
-	fmt.Println(zzz)
-	b.Add(1234567890, zzz)
-
 	gs := ngram.Split("chinese")
-	if false {
+	if true {
 		gs = ngram.Split(`kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
  together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350\u00b0 for 1 hour.""]",www.
 cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""whole kernel corn"", ""crackers"", ""egg"", ""butter"", ""pepper""]" `)
@@ -131,7 +126,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 	start := time.Now()
 	var results []KeyTimeScore
 	wg := sync.WaitGroup{}
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -169,7 +164,7 @@ func TestCollision(t *testing.T) {
 	rand.Seed(clock.Unix())
 	m := roaring.New()
 	verify := map[uint32]*roaring.Bitmap{}
-	x := rand.Perm(1440)
+	x := rand.Perm(1024)
 	for i := 0; i < 1e6; i++ {
 		v := rand.Uint32()
 		h := h16(v, 0)
@@ -178,13 +173,13 @@ func TestCollision(t *testing.T) {
 		rand.Shuffle(len(x), func(i, j int) {
 			x[i], x[j] = x[j], x[i]
 		})
-		for _, ts := range x[:rand.Intn(200)+200] {
+		for _, ts := range x[:rand.Intn(100)+100] {
 			m.Add(h[0] + uint32(ts))
-			m.Add(h[1] + uint32(ts))
+			// m.Add(h[1] + uint32(ts))
 			// m.Add(h[2] + uint32(ts))
 			verify[v].Add(uint32(ts))
 		}
-		if i%1000 == 0 {
+		if i%100000 == 0 {
 			fmt.Println(i)
 		}
 	}
@@ -193,16 +188,15 @@ func TestCollision(t *testing.T) {
 	for v, ts := range verify {
 		h := h16(v, 0)
 		tmp := roaring.New()
-		for i := 0; i < 1440; i++ {
-			if m.Contains(h[0]+uint32(i)) && m.Contains(h[1]+uint32(i)) { // && m.Contains(h[2]+uint32(i)) {
+		for i := 0; i < 1024; i++ {
+			if m.Contains(h[0] + uint32(i)) { //  && m.Contains(h[1]+uint32(i)) { // && m.Contains(h[2]+uint32(i)) {
 				tmp.Add(uint32(i))
 			}
 		}
-		tmp.AndNot(ts)
 		total += int(ts.GetCardinality())
 		bad += int(tmp.GetCardinality())
 	}
-	fmt.Println(bad, total)
+	fmt.Println(bad, total, m.GetSerializedSizeInBytes())
 }
 
 func BenchmarkXor(b *testing.B) {

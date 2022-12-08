@@ -112,6 +112,18 @@ func (b *bitmap1024) contains(index uint16) bool {
 	return (*b)[index/16]&(1<<(index%16)) > 0
 }
 
+func (b *bitmap1024) and(b2 *bitmap1024) {
+	for i := range *b {
+		(*b)[i] &= (*b2)[i]
+	}
+}
+
+func (b *bitmap1024) or(b2 *bitmap1024) {
+	for i := range *b {
+		(*b)[i] |= (*b2)[i]
+	}
+}
+
 func (b bitmap1024) String() string {
 	buf := bytes.NewBufferString("{fast bitmap")
 	for i := 0; i < fastSlotNum; i++ {

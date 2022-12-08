@@ -18,6 +18,7 @@ const (
 	slotNum      = 1 << 6
 	fastSlotNum  = 1 << 10
 	fastSlotSize = slotNum * slotSize / fastSlotNum
+	fastSlotMask = 0xfffffc00
 )
 
 type Range struct {
@@ -90,8 +91,7 @@ func (b *Range) Add(key uint64, v []uint64) bool {
 	for _, v := range v {
 		h := h16(uint32(v), b.start)
 		for i := 0; i < int(b.hashNum); i++ {
-			b.fastTable.Add(h[i])
-			b.fastTable.Add(h[i] + 1 + offset)
+			b.fastTable.Add(h[i]&fastSlotMask | offset)
 		}
 	}
 
@@ -449,7 +449,7 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	for _, v := range musts {
 		h := h16(uint32(v), b.start)
 		for i := 0; i < int(b.hashNum); i++ {
-			x := &hashState{h: h[i]}
+			x := &hashState{h: h[i] & fastSlotMask}
 			hashStates[h[i]] = x // TODO: duplicated hashes
 			hashSort = append(hashSort, x)
 		}
@@ -459,7 +459,7 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	for _, v := range qs {
 		h := h16(uint32(v), b.start)
 		for i := 0; i < int(b.hashNum); i++ {
-			x := &hashState{h: h[i]}
+			x := &hashState{h: h[i] & fastSlotMask}
 			hashStates[h[i]] = x
 			hashSort = append(hashSort, x)
 		}
@@ -467,42 +467,20 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	}
 	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i].h < hashSort[j].h })
 
-SEARCH:
-	overlapHashes := []*hashState{}
 	for iter := b.fastTable.Iterator(); len(hashSort) > 0; {
 		hs := hashSort[0]
-		h := hs.h
 		hashSort = hashSort[1:]
 
-		iter.AdvanceIfNeeded(h)
-		if !iter.HasNext() {
-			continue
-		}
-		if iter.Next() != h {
-			continue
-		}
+		iter.AdvanceIfNeeded(hs.h)
 		for iter.HasNext() {
 			h2 := iter.PeekNext()
-			if h2-(h+1) < fastSlotSize {
-				// The next value (h2), is not only within the [0, fastSlotSize] range of current hash,
-				// but also the start of the next hash in 'hashSort'. Dealing 2 hashes together is hard,
-				// so remove the next hash and store it elsewhere. It will be checked in the next round.
-				if len(hashSort) > 0 && h2 == hashSort[0].h {
-					overlapHashes = append(overlapHashes, hashSort[0])
-					hashSort = hashSort[1:]
-				}
-
-				hs.Add(h2 - (h + 1))
+			if h2&fastSlotMask == hs.h {
+				hs.Add(h2 - hs.h)
 				iter.Next()
 			} else {
 				break
 			}
 		}
-	}
-	if len(overlapHashes) > 0 {
-		// fmt.Println("overlap", hr, overlapHashes)
-		hashSort = overlapHashes
-		goto SEARCH
 	}
 
 	// z := time.Now()
