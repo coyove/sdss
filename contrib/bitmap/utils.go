@@ -112,6 +112,18 @@ func (b *bitmap1024) contains(index uint16) bool {
 	return (*b)[index/16]&(1<<(index%16)) > 0
 }
 
+func (b *bitmap1024) iterate(f func(uint16) bool) {
+	for si, s := range *b {
+		for i := 0; i < 16; i++ {
+			if s&(1<<i) > 0 {
+				if !f(uint16(si*16 + i)) {
+					return
+				}
+			}
+		}
+	}
+}
+
 func (b *bitmap1024) and(b2 *bitmap1024) {
 	for i := range *b {
 		(*b)[i] &= (*b2)[i]

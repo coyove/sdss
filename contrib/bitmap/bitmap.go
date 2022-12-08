@@ -438,7 +438,7 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 
 	type hashState struct {
 		h uint32
-		roaring.Bitmap
+		bitmap1024
 	}
 
 	hashStates := map[uint32]*hashState{}
@@ -475,7 +475,7 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 		for iter.HasNext() {
 			h2 := iter.PeekNext()
 			if h2&fastSlotMask == hs.h {
-				hs.Add(h2 - hs.h)
+				hs.add(uint16(h2 - hs.h))
 				iter.Next()
 			} else {
 				break
@@ -484,48 +484,48 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	}
 
 	// z := time.Now()
-	scores := map[uint32]int{}
-	final := roaring.New()
+	scores := map[uint16]int{}
+	var final bitmap1024
 	for i := range qsHashes {
 		raw := qsHashes[i]
-		m := &hashStates[raw[0]].Bitmap
+		m := &hashStates[raw[0]].bitmap1024
 		for i := 1; i < int(b.hashNum); i++ {
-			m.And(&hashStates[raw[i]].Bitmap)
+			m.and(&hashStates[raw[i]].bitmap1024)
 		}
 		if joinType == JoinAll {
 			if i == 0 {
-				final = m
+				final = *m
 			} else {
-				final.And(m)
+				final.and(m)
 			}
 		} else {
-			m.Iterate(func(x uint32) bool { scores[x]++; return true })
-			final.Or(m)
+			m.iterate(func(x uint16) bool { scores[x]++; return true })
+			final.or(m)
 		}
 	}
 
 	for i := range mustHashes {
 		raw := mustHashes[i]
-		m := &hashStates[raw[0]].Bitmap
+		m := &hashStates[raw[0]].bitmap1024
 		for i := 1; i < int(b.hashNum); i++ {
-			m.And(&hashStates[raw[i]].Bitmap)
+			m.and(&hashStates[raw[i]].bitmap1024)
 		}
-		m.Iterate(func(x uint32) bool { scores[x]++; return true })
+		m.iterate(func(x uint16) bool { scores[x]++; return true })
 		if len(qsHashes) == 0 && i == 0 {
-			final = m
+			final = *m
 		} else {
-			final.And(m)
+			final.and(m)
 		}
 	}
 
-	for iter := final.Iterator(); iter.HasNext(); {
-		offset := uint16(iter.Next())
-		s := int(scores[uint32(offset)])
+	final.iterate(func(offset uint16) bool {
+		s := int(scores[offset])
 		if joinType == JoinMajor && s < majorScore(len(qs))+len(musts) {
-			continue
+			return true
 		}
 		res.add(offset)
-	}
+		return true
+	})
 	return
 }
 
