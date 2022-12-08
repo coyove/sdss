@@ -53,12 +53,16 @@ func Read(rd io.Reader) (*Cursor, bool) {
 		if err := binary.Read(rd, binary.BigEndian, &length); err != nil {
 			return nil, false
 		}
-		tmp := make([]byte, length)
-		if err := binary.Read(rd, binary.BigEndian, tmp); err != nil {
-			return nil, false
-		}
-		if err := c.bf[i].GobDecode(tmp); err != nil {
-			return nil, false
+		if length == 0 {
+			c.bf[i] = bloom.NewWithEstimates(uint(Count), FalsePositive)
+		} else {
+			tmp := make([]byte, length)
+			if err := binary.Read(rd, binary.BigEndian, tmp); err != nil {
+				return nil, false
+			}
+			if err := c.bf[i].GobDecode(tmp); err != nil {
+				return nil, false
+			}
 		}
 	}
 	return c, true
@@ -99,12 +103,18 @@ func (c *Cursor) MarshalBinary() []byte {
 	binary.Write(out, binary.BigEndian, c.NextId)
 	binary.Write(out, binary.BigEndian, c.count)
 
-	for _, bf := range c.bf {
+	mapIdx := (c.count / int64(Count)) % int64(len(c.bf))
+	for i, bf := range c.bf {
+		if c.count < int64(Count*len(c.bf)) {
+			if i > int(mapIdx) {
+				binary.Write(out, binary.BigEndian, uint32(0))
+				continue
+			}
+		}
 		a, _ := bf.GobEncode()
 		binary.Write(out, binary.BigEndian, uint32(len(a)))
 		binary.Write(out, binary.BigEndian, a)
 	}
-
 	return out.Bytes()
 }
 

@@ -75,7 +75,7 @@ func TestBitmap2(t *testing.T) {
 
 	rd := csv.NewReader(f)
 	tso := 0
-	for i := 0; false && i < 100000; i++ {
+	for i := 0; false && i < 1000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -106,7 +106,7 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(zzz)
 	b.Add(1234567890, zzz)
 
-	gs := ngram.Split("fuck")
+	gs := ngram.Split("chinese")
 	if false {
 		gs = ngram.Split(`kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
  together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350\u00b0 for 1 hour.""]",www.
@@ -135,8 +135,8 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results = b.Join(q, nil, 1670192109, 50, JoinMajor)
-			// 	results = b.Join(q, nil, b.End(), 50, JoinMajor)
+			// results = b.Join(q, nil, 1670192109, 50, JoinMajor)
+			results = b.Join(q, nil, b.End(), 50, JoinMajor)
 		}()
 	}
 	wg.Wait()

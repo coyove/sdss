@@ -10,7 +10,7 @@ import (
 )
 
 func TestCursor(t *testing.T) {
-	c, _ := Parse("")
+	c := New()
 	for i := 0; i < 500; i++ {
 		c.Add(strconv.Itoa(i))
 	}

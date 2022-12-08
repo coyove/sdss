@@ -102,17 +102,17 @@ func Load(path string) (*Range, error) {
 	return Unmarshal(f)
 }
 
-type bitmap1440 [fastSlotNum / 16]uint16
+type bitmap1024 [fastSlotNum / 16]uint16
 
-func (b *bitmap1440) add(index uint16) { // [0, fastSlotNum)
+func (b *bitmap1024) add(index uint16) { // [0, fastSlotNum)
 	(*b)[index/16] |= 1 << (index % 16)
 }
 
-func (b *bitmap1440) contains(index uint16) bool {
+func (b *bitmap1024) contains(index uint16) bool {
 	return (*b)[index/16]&(1<<(index%16)) > 0
 }
 
-func (b bitmap1440) String() string {
+func (b bitmap1024) String() string {
 	buf := bytes.NewBufferString("{fast bitmap")
 	for i := 0; i < fastSlotNum; i++ {
 		if b.contains(uint16(i)) {

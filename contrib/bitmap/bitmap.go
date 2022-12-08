@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/RoaringBitmap/roaring"
+	"github.com/pierrec/lz4"
 )
 
 const (
@@ -159,13 +160,18 @@ func (b *subMap) prevSpan(i int64) uint32 {
 }
 
 func (b *subMap) join(scoresMap []uint8,
-	hashSort, mustHashSort []uint64, hr int, fast *bitmap1440,
+	hashSort, mustHashSort []uint64, hr int, fast *bitmap1024,
 	end int64, joinType int, count int, res *[]KeyTimeScore) {
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	for i := end - 1; i >= 0; i-- {
+	end1 := end - 1
+	if end1 >= int64(len(b.keys)) {
+		end1 = int64(len(b.keys)) - 1
+	}
+
+	for i := end1; i >= 0; i-- {
 		if !fast.contains(uint16((hr*slotSize + int(i)) / fastSlotSize)) {
 			continue
 		}
@@ -231,6 +237,9 @@ func Unmarshal(rd io.Reader) (*Range, error) {
 	var ver byte
 	if err := binary.Read(rd, binary.BigEndian, &ver); err != nil {
 		return nil, fmt.Errorf("read version: %v", err)
+	}
+	if ver == 4 {
+		rd = lz4.NewReader(rd)
 	}
 
 	b := &Range{}
@@ -331,10 +340,12 @@ func (b *Range) Marshal(w io.Writer) (int, error) {
 	defer b.mu.RUnlock()
 
 	mw := &meterWriter{Writer: w}
-	mw.Write([]byte{1})
+	mw.Write([]byte{4})
+	zw := lz4.NewWriter(mw)
 
 	h := crc32.NewIEEE()
-	w = io.MultiWriter(mw, h)
+	w = io.MultiWriter(zw, h)
+
 	if err := binary.Write(w, binary.BigEndian, b.start); err != nil {
 		return 0, err
 	}
@@ -358,6 +369,9 @@ func (b *Range) Marshal(w io.Writer) (int, error) {
 		if err := h.writeTo(w); err != nil {
 			return 0, err
 		}
+	}
+	if err := zw.Close(); err != nil {
+		return 0, err
 	}
 	return mw.size, nil
 }
@@ -385,6 +399,8 @@ func (b *subMap) writeTo(w io.Writer) error {
 }
 
 func (b *Range) RoughSizeBytes() (sz int64) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	sz += int64(b.fastTable.GetSerializedSizeInBytes())
 	for i := range b.slots {
 		sz += int64(len(b.slots[i].xfs))
@@ -416,7 +432,7 @@ func (b *subMap) debug(i int, buf io.Writer) {
 	}
 }
 
-func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1440) {
+func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
