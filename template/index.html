@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<style>
+*{box-sizing: border-box}
+#container{
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    }
+#container .row {
+    width: 100%;
+    border: solid 1px red;
+}
+</style>
+    <div id=container>
+    </div>
+
+            <script>
+                const container = document.getElementById('container');
+                const r = container.getBoundingClientRect();
+                const height = 32;
+                var bottom = 0;
+                container.ROWS = [];
+                while (bottom + height < r.height) {
+                                    const div = document.createElement('div');
+                                    div.className = 'row';
+                                    div.style.height = height + 'px';
+                                    div.style.lineHeight = height + 'px';
+                                    div.innerHTML = bottom;
+                                    container.appendChild(div);
+                                    container.ROWS.push(div);
+                                    bottom += height;
+                }
+            </script>
+</html>

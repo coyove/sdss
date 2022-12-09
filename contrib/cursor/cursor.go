@@ -9,11 +9,12 @@ import (
 	"strings"
 
 	"github.com/bits-and-blooms/bloom/v3"
+	"github.com/pierrec/lz4"
 )
 
 var (
-	Count         = 256
-	FalsePositive = 0.001
+	Count         = 1024
+	FalsePositive = 1e-6
 )
 
 type Cursor struct {
@@ -36,6 +37,7 @@ func Parse(v string) (*Cursor, bool) {
 }
 
 func Read(rd io.Reader) (*Cursor, bool) {
+	rd = lz4.NewReader(rd)
 	c := &Cursor{}
 	if err := binary.Read(rd, binary.BigEndian, &c.NextMap); err != nil {
 		return nil, false
@@ -56,11 +58,7 @@ func Read(rd io.Reader) (*Cursor, bool) {
 		if length == 0 {
 			c.bf[i] = bloom.NewWithEstimates(uint(Count), FalsePositive)
 		} else {
-			tmp := make([]byte, length)
-			if err := binary.Read(rd, binary.BigEndian, tmp); err != nil {
-				return nil, false
-			}
-			if err := c.bf[i].GobDecode(tmp); err != nil {
+			if _, err := c.bf[i].ReadFrom(io.LimitReader(rd, int64(length))); err != nil {
 				return nil, false
 			}
 		}
@@ -98,7 +96,8 @@ func (c *Cursor) GoString() string {
 }
 
 func (c *Cursor) MarshalBinary() []byte {
-	out := &bytes.Buffer{}
+	buf := &bytes.Buffer{}
+	out := lz4.NewWriter(buf)
 	binary.Write(out, binary.BigEndian, c.NextMap)
 	binary.Write(out, binary.BigEndian, c.NextId)
 	binary.Write(out, binary.BigEndian, c.count)
@@ -115,7 +114,8 @@ func (c *Cursor) MarshalBinary() []byte {
 		binary.Write(out, binary.BigEndian, uint32(len(a)))
 		binary.Write(out, binary.BigEndian, a)
 	}
-	return out.Bytes()
+	out.Close()
+	return buf.Bytes()
 }
 
 // old := buf.String()
