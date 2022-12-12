@@ -45,6 +45,8 @@ func init() {
 	}
 
 	englishLemma, _ = golem.New(en.New())
+
+	runeTable['\u0131'] = 'i'
 }
 
 func cv(in rune) rune {
@@ -77,7 +79,7 @@ func normal(r rune) rune {
 		return r
 	}
 	nr, _ := utf8.DecodeRune(output)
-	return nr
+	return cv(nr)
 }
 
 type set func(rune) bool

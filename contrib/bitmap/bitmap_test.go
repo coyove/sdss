@@ -201,25 +201,29 @@ func TestCollision(t *testing.T) {
 
 func BenchmarkXor(b *testing.B) {
 	{
-		z := []uint64{}
-		d := map[uint64]bool{}
-		rand.Seed(clock.Unix())
-		for i := 0; i < 1e4; i++ {
-			v := rand.Uint64()
-			z = append(z, v)
-			d[v] = true
-		}
-		f := xfBuild(xfNew(z))
-		for i := 0; i < 1e5; i++ {
-			v := rand.Uint64()
-			if d[v] {
-				continue
-			}
-			if f.Contains(v) {
-				panic(i)
-			}
-		}
-		fmt.Println(z, types.StrHash("shit"))
+		buf, _ := ioutil.ReadFile("zzz")
+		start := time.Now()
+		m, _ := Unmarshal(bytes.NewReader(buf))
+		fmt.Println(m.RoughSizeBytes(), time.Since(start))
+		// z := []uint64{}
+		// d := map[uint64]bool{}
+		// rand.Seed(clock.Unix())
+		// for i := 0; i < 1e4; i++ {
+		// 	v := rand.Uint64()
+		// 	z = append(z, v)
+		// 	d[v] = true
+		// }
+		// f := xfBuild(xfNew(z))
+		// for i := 0; i < 1e5; i++ {
+		// 	v := rand.Uint64()
+		// 	if d[v] {
+		// 		continue
+		// 	}
+		// 	if f.Contains(v) {
+		// 		panic(i)
+		// 	}
+		// }
+		// fmt.Println(z, types.StrHash("shit"))
 		return
 	}
 

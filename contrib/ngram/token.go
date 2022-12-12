@@ -74,6 +74,7 @@ func Split(text string) (res map[string]Token) {
 			if (prevRuneNormalized <= utf8.RuneSelf) != (normal(r) <= utf8.RuneSelf) {
 				isdiff = true
 			}
+			// fmt.Println(text[prevStart:i], string(prevRuneNormalized), string(prevRune))
 			if isdiff {
 				sp.do(text[prevStart:i], res, false)
 				prevStart = i
@@ -85,6 +86,10 @@ func Split(text string) (res map[string]Token) {
 			prevRune = r
 			prevRuneNormalized = normal(r)
 		} else {
+			if r > 65535 {
+				sp.freq[text[prevStart:i]]++
+				sp.total++
+			}
 			prevRune = utf8.RuneError
 			prevStart = i
 			// inQuote = r == '"'
