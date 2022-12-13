@@ -143,7 +143,7 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 	// fmt.Println(lastSplitText, v)
 	s.lastSplitText = v
 
-	if normal(r) < utf8.RuneSelf {
+	if normal(r) < utf8.RuneSelf || unicode.IsLower(r) || unicode.IsUpper(r) {
 		if len(v) == 1 {
 			return
 		}
