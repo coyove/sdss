@@ -83,10 +83,21 @@ func Split(text string) (res map[string]Token) {
 		i += sz
 
 		if isContinue(r) {
+			if r == 0xFE0F {
+				_, sz := utf8.DecodeLastRuneInString(text[:prevStart])
+				sp.freq[text[prevStart-sz:i]]++
+				prevStart = i
+				continue
+			}
 			prevRune = r
 			prevRuneNormalized = normal(r)
 		} else {
 			if r > 65535 {
+				if 0x1f1e6 <= r && r <= 0x1f1ff {
+					prevRune = r
+					prevRuneNormalized = normal(r)
+					continue
+				}
 				sp.freq[text[prevStart:i]]++
 				sp.total++
 			}
