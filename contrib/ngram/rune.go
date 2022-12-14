@@ -3,12 +3,11 @@ package ngram
 import (
 	"bytes"
 	_ "embed"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/aaaton/golem/v4"
 	"github.com/aaaton/golem/v4/dicts/en"
-
-	"unicode"
 
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
@@ -18,7 +17,12 @@ import (
 //go:embed TSCharacters.txt
 var rawDictBuf []byte
 
+//go:embed emoji_v15.txt
+var rawEmojiBuf []byte
+
 var runeTable = map[rune]rune{}
+
+var emojiTree = map[rune][]string{}
 
 var englishLemma *golem.Lemmatizer
 
@@ -47,6 +51,30 @@ func init() {
 	englishLemma, _ = golem.New(en.New())
 
 	runeTable['\u0131'] = 'i'
+
+	for {
+		idx := bytes.IndexByte(rawEmojiBuf, '\n')
+
+		var line []byte
+		if idx > 0 {
+			line = rawEmojiBuf[:idx]
+			rawEmojiBuf = rawEmojiBuf[idx+1:]
+		} else {
+			line = rawEmojiBuf
+		}
+
+		if len(line) == 0 {
+			break
+		}
+
+		parts := bytes.Split(line, []byte{' '})
+		head := parseUnicode(parts[0])
+		var tail []rune
+		for _, p := range parts {
+			tail = append(tail, parseUnicode(p))
+		}
+		emojiTree[head] = append(emojiTree[head], string(tail))
+	}
 }
 
 func cv(in rune) rune {
@@ -169,6 +197,19 @@ func trigram(v string) (res []string) {
 	}
 	if len(res) == 0 {
 		res = append(res, orig)
+	}
+	return
+}
+
+func parseUnicode(v []byte) (r rune) {
+	for i := 2; i < len(v); i++ {
+		x := v[i]
+		if x >= 'A' {
+			x = x - 'A' + 10
+		} else {
+			x -= '0'
+		}
+		r = r<<4 + rune(x)
 	}
 	return
 }

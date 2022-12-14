@@ -3,6 +3,7 @@ package ngram
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -55,6 +56,22 @@ func Split(text string) (res map[string]Token) {
 			goto BREAK
 		}
 
+		if eps, ok := emojiTree[r]; ok {
+			found := false
+			for _, ep := range eps {
+				if strings.HasPrefix(text[i:], ep) {
+					sp.freq[ep]++
+					sp.total++
+					i += len(ep)
+					found = true
+					break
+				}
+			}
+			if found {
+				continue
+			}
+		}
+
 		// if inQuote {
 		// 	if r == '"' {
 		// 		sp.do(text[prevStart:i], res, true)
@@ -83,21 +100,10 @@ func Split(text string) (res map[string]Token) {
 		i += sz
 
 		if isContinue(r) {
-			if r == 0xFE0F {
-				_, sz := utf8.DecodeLastRuneInString(text[:prevStart])
-				sp.freq[text[prevStart-sz:i]]++
-				prevStart = i
-				continue
-			}
 			prevRune = r
 			prevRuneNormalized = normal(r)
 		} else {
 			if r > 65535 {
-				if 0x1f1e6 <= r && r <= 0x1f1ff {
-					prevRune = r
-					prevRuneNormalized = normal(r)
-					continue
-				}
 				sp.freq[text[prevStart:i]]++
 				sp.total++
 			}
