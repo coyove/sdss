@@ -62,7 +62,12 @@ func Split(text string) (res map[string]Token) {
 				if strings.HasPrefix(text[i:], ep) {
 					sp.freq[ep]++
 					sp.total++
+					if prevRune != utf8.RuneError {
+						sp.do(text[prevStart:i], res, false)
+						prevRune = utf8.RuneError
+					}
 					i += len(ep)
+					prevStart = i
 					found = true
 					break
 				}
