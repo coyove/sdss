@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/contrib/ngram"
 	"github.com/coyove/sdss/types"
@@ -162,85 +161,62 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 
 func TestCollision(t *testing.T) {
 	rand.Seed(clock.Unix())
-	m := roaring.New()
-	verify := map[uint32]*roaring.Bitmap{}
-	x := rand.Perm(1024)
-	for i := 0; i < 1e6; i++ {
-		v := rand.Uint32()
-		h := h16(v, 0)
-
-		verify[v] = roaring.New()
-		rand.Shuffle(len(x), func(i, j int) {
-			x[i], x[j] = x[j], x[i]
-		})
-		for _, ts := range x[:rand.Intn(100)+100] {
-			m.Add(h[0] + uint32(ts))
-			// m.Add(h[1] + uint32(ts))
-			// m.Add(h[2] + uint32(ts))
-			verify[v].Add(uint32(ts))
-		}
-		if i%100000 == 0 {
-			fmt.Println(i)
+	x := []uint64{}
+	for i := 0; i < 1e3; i++ {
+		v := rand.Uint64()
+		x = append(x, v)
+	}
+	xf, vs := xfBuild(xfNew(x))
+	for i := 0; ; i++ {
+		if xfContains(xf, vs, rand.Uint64()) {
+			panic(i)
 		}
 	}
-
-	bad, total := 0, 0
-	for v, ts := range verify {
-		h := h16(v, 0)
-		tmp := roaring.New()
-		for i := 0; i < 1024; i++ {
-			if m.Contains(h[0] + uint32(i)) { //  && m.Contains(h[1]+uint32(i)) { // && m.Contains(h[2]+uint32(i)) {
-				tmp.Add(uint32(i))
-			}
-		}
-		total += int(ts.GetCardinality())
-		bad += int(tmp.GetCardinality())
-	}
-	fmt.Println(bad, total, m.GetSerializedSizeInBytes())
 }
 
-func BenchmarkXor(b *testing.B) {
-	{
-		buf, _ := ioutil.ReadFile("zzz")
-		start := time.Now()
-		m, _ := Unmarshal(bytes.NewReader(buf))
-		fmt.Println(m.RoughSizeBytes(), time.Since(start))
-		// z := []uint64{}
-		// d := map[uint64]bool{}
-		// rand.Seed(clock.Unix())
-		// for i := 0; i < 1e4; i++ {
-		// 	v := rand.Uint64()
-		// 	z = append(z, v)
-		// 	d[v] = true
-		// }
-		// f := xfBuild(xfNew(z))
-		// for i := 0; i < 1e5; i++ {
-		// 	v := rand.Uint64()
-		// 	if d[v] {
-		// 		continue
-		// 	}
-		// 	if f.Contains(v) {
-		// 		panic(i)
-		// 	}
-		// }
-		// fmt.Println(z, types.StrHash("shit"))
-		return
-	}
-
+func BenchmarkXorSmall(b *testing.B) {
 	var x []uint64
-	var dedup = map[uint64]bool{}
 	rand.Seed(clock.Unix())
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 5; i++ {
 		v := rand.Uint64()
-		if dedup[v] {
-			continue
-		}
 		x = append(x, v)
-		dedup[v] = true
 	}
 	zzz := xfNew(x)
-	fmt.Println(len(zzz), len(xfNew2(x)))
+	fmt.Println(len(zzz))
 	for i := 0; i < b.N; i++ {
-		xfBuild(zzz)
+		x, vs := xfBuild(zzz)
+		if !xfContains(x, vs, vs[len(vs)-1]) {
+			b.FailNow()
+		}
 	}
 }
+
+// func BenchmarkContainsBrute(b *testing.B) {
+// 	var x []uint64
+// 	rand.Seed(clock.Unix())
+// 	for i := 0; i < 6; i++ {
+// 		v := rand.Uint64()
+// 		x = append(x, v)
+// 	}
+// 	n := rand.Uint64()
+// 	for i := 0; i < b.N; i++ {
+// 		for _, v0 := range x {
+// 			if v0 == n {
+// 				break
+// 			}
+// 		}
+// 	}
+// }
+//
+// func BenchmarkContainsBinary(b *testing.B) {
+// 	var x []int
+// 	rand.Seed(clock.Unix())
+// 	for i := 0; i < 6; i++ {
+// 		v := rand.Uint64()
+// 		x = append(x, int(v))
+// 	}
+// 	n := int(rand.Uint64())
+// 	for i := 0; i < b.N; i++ {
+// 		sort.SearchInts(x, n)
+// 	}
+// }

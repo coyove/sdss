@@ -79,6 +79,9 @@ type subMap struct {
 }
 
 func (b *Range) Add(key uint64, v []uint64) bool {
+	if len(v) == 0 {
+		return false
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -176,14 +179,14 @@ func (b *subMap) join(scoresMap []uint8,
 			continue
 		}
 		s := 0
-		xf := xfBuild(b.xfs[b.prevSpan(i):b.spans[i]])
+		xf, vs := xfBuild(b.xfs[b.prevSpan(i):b.spans[i]])
 		for _, hs := range hashSort {
-			if xf.Contains(hs) {
+			if xfContains(xf, vs, hs) {
 				s++
 			}
 		}
 		for _, hs := range mustHashSort {
-			if xf.Contains(hs) {
+			if xfContains(xf, vs, hs) {
 				s++
 			} else {
 				goto NEXT
@@ -534,9 +537,9 @@ func (b *Range) Find(key uint64) (int64, func(uint64) bool) {
 		m.mu.Lock()
 		for i, k := range m.keys {
 			if k == key {
-				x := xfBuild(m.xfs[m.prevSpan(int64(i)):m.spans[i]])
+				x, vs := xfBuild(m.xfs[m.prevSpan(int64(i)):m.spans[i]])
 				m.mu.Unlock()
-				return int64(hr)*slotSize + int64(i), x.Contains
+				return int64(hr)*slotSize + int64(i), func(k uint64) bool { return xfContains(x, vs, k) }
 			}
 		}
 		m.mu.Unlock()
