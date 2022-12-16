@@ -208,6 +208,22 @@ func BenchmarkXorSmall(b *testing.B) {
 // 	}
 // }
 //
+// func BenchmarkContainsXor(b *testing.B) {
+// 	var x []uint64
+// 	rand.Seed(clock.Unix())
+// 	for i := 0; i < 6; i++ {
+// 		v := rand.Uint64()
+// 		x = append(x, v)
+// 	}
+// 	n := rand.Uint64()
+// 	xf, _ := xorfilter.Populate(x)
+// 	for i := 0; i < b.N; i++ {
+// 		if xf.Contains(n) {
+// 			break
+// 		}
+// 	}
+// }
+//
 // func BenchmarkContainsBinary(b *testing.B) {
 // 	var x []int
 // 	rand.Seed(clock.Unix())

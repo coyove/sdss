@@ -174,6 +174,8 @@ func (b *subMap) join(scoresMap []uint8,
 		end1 = int64(len(b.keys)) - 1
 	}
 
+	ms := majorScore(len(hashSort)) + len(mustHashSort)
+	as := len(hashSort) + len(mustHashSort)
 	for i := end1; i >= 0; i-- {
 		if !fast.contains(uint16((hr*slotSize + int(i)) / fastSlotSize)) {
 			continue
@@ -192,10 +194,10 @@ func (b *subMap) join(scoresMap []uint8,
 				goto NEXT
 			}
 		}
-		if joinType == JoinMajor && s < majorScore(len(hashSort))+len(mustHashSort) {
+		if joinType == JoinMajor && s < ms {
 			goto NEXT
 		}
-		if joinType == JoinAll && s < len(hashSort)+len(mustHashSort) {
+		if joinType == JoinAll && s < as {
 			goto NEXT
 		}
 		*res = append(*res, KeyTimeScore{
@@ -277,10 +279,10 @@ func Unmarshal(rd io.Reader) (*Range, error) {
 		return nil, fmt.Errorf("read checksum: %v", err)
 	}
 	if checksum != verify {
-		return nil, fmt.Errorf("invalid fast table checksum %x and %x", verify, checksum)
+		return nil, fmt.Errorf("invalid header checksum %x and %x", verify, checksum)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read fast table: %v", err)
+		return nil, fmt.Errorf("read header: %v", err)
 	}
 
 	for i := range b.slots {
@@ -521,9 +523,10 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 		}
 	}
 
+	ms := majorScore(len(qs)) + len(musts)
 	final.iterate(func(offset uint16) bool {
 		s := int(scores[offset])
-		if joinType == JoinMajor && s < majorScore(len(qs))+len(musts) {
+		if joinType == JoinMajor && s < ms {
 			return true
 		}
 		res.add(offset)
