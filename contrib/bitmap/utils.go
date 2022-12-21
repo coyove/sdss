@@ -61,7 +61,7 @@ func combinehash(k1, seed uint32) uint32 {
 }
 
 type KeyTimeScore struct {
-	Key   uint64
+	Key   Key
 	Id    int64
 	Score int
 }

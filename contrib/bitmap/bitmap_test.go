@@ -74,7 +74,7 @@ func TestBitmap2(t *testing.T) {
 
 	rd := csv.NewReader(f)
 	tso := 0
-	for i := 0; true && i < 1000; i++ {
+	for i := 0; false && i < 1000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -85,7 +85,7 @@ func TestBitmap2(t *testing.T) {
 		for k := range ngram.Split(string(line)) {
 			hs = append(hs, types.StrHash(k))
 		}
-		b.Add(uint64(i), hs)
+		b.Add(Uint64Key(uint64(i)), hs)
 
 		if i%1000 == 0 {
 			log.Println(i)
@@ -137,10 +137,10 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 	fmt.Println(len(results), time.Since(start))
 	hits := 0
 
-	sort.Slice(results, func(i, j int) bool { return results[i].Key < results[j].Key })
+	sort.Slice(results, func(i, j int) bool { return results[i].Key.Less(results[j].Key) })
 	lineNums := []int{}
 	for _, res := range results {
-		lineNums = append(lineNums, int(res.Key))
+		lineNums = append(lineNums, int(res.Key.LowUint64()))
 	}
 	lines := lineOf(path, lineNums)
 	for i, line := range lines {
@@ -151,7 +151,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 			}
 		}
 		if s >= len(gs)/2 {
-			fmt.Println(results[i].Key, results[i].Id, s) // , line)
+			fmt.Println(results[i].Key.LowUint64(), results[i].Id, s) // , line)
 			_ = i
 			hits++
 		}

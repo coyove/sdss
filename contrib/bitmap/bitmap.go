@@ -51,9 +51,9 @@ func (b *Range) End() int64 {
 	return b.start + b.end
 }
 
-func (b *Range) FirstKey() uint64 {
+func (b *Range) FirstKey() Key {
 	if b.end < 0 {
-		return 0
+		return Key{}
 	}
 	m := b.slots[0]
 	m.mu.RLock()
@@ -61,9 +61,9 @@ func (b *Range) FirstKey() uint64 {
 	return m.keys[0]
 }
 
-func (b *Range) LastKey() uint64 {
+func (b *Range) LastKey() Key {
 	if b.end < 0 {
-		return 0
+		return Key{}
 	}
 	m := b.slots[b.end/slotSize]
 	m.mu.RLock()
@@ -73,12 +73,12 @@ func (b *Range) LastKey() uint64 {
 
 type subMap struct {
 	mu    sync.RWMutex
-	keys  []uint64
+	keys  []Key
 	spans []uint32
 	xfs   []byte
 }
 
-func (b *Range) Add(key uint64, v []uint64) bool {
+func (b *Range) Add(key Key, v []uint64) bool {
 	if len(v) == 0 {
 		return false
 	}
@@ -273,6 +273,13 @@ func Unmarshal(rd io.Reader) (*Range, error) {
 		return nil, fmt.Errorf("read fast table bitmap: %v", err)
 	}
 
+	for i := range b.slots {
+		b.slots[i], err = readSubMap(rd)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	verify := h.Sum32()
 	var checksum uint32
 	if err := binary.Read(rd, binary.BigEndian, &checksum); err != nil {
@@ -285,20 +292,10 @@ func Unmarshal(rd io.Reader) (*Range, error) {
 		return nil, fmt.Errorf("read header: %v", err)
 	}
 
-	for i := range b.slots {
-		b.slots[i], err = readSubMap(rd)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return b, nil
 }
 
 func readSubMap(rd io.Reader) (*subMap, error) {
-	h := crc32.NewIEEE()
-	rd = io.TeeReader(rd, h)
-
 	b := &subMap{}
 
 	var keysLen uint32
@@ -306,10 +303,11 @@ func readSubMap(rd io.Reader) (*subMap, error) {
 		return nil, fmt.Errorf("read keys length: %v", err)
 	}
 
-	b.keys = make([]uint64, keysLen)
-	if err := binary.Read(rd, binary.BigEndian, b.keys); err != nil {
+	tmp := make([]byte, keysLen*uint32(KeySize))
+	if err := binary.Read(rd, binary.BigEndian, tmp); err != nil {
 		return nil, fmt.Errorf("read keys: %v", err)
 	}
+	b.keys = bytesKeys(tmp)
 
 	b.spans = make([]uint32, keysLen)
 	if err := binary.Read(rd, binary.BigEndian, b.spans); err != nil {
@@ -323,14 +321,6 @@ func readSubMap(rd io.Reader) (*subMap, error) {
 		}
 	}
 
-	verify := h.Sum32()
-	var checksum uint32
-	if err := binary.Read(rd, binary.BigEndian, &checksum); err != nil {
-		return nil, fmt.Errorf("read checksum: %v", err)
-	}
-	if checksum != verify {
-		return nil, fmt.Errorf("invalid checksum %x and %x", verify, checksum)
-	}
 	return b, nil
 }
 
@@ -366,14 +356,14 @@ func (b *Range) Marshal(w io.Writer) (int, error) {
 	if _, err := b.fastTable.WriteTo(w); err != nil {
 		return 0, err
 	}
-	// Write CRC32 checksum to the end of stream.
-	if err := binary.Write(w, binary.BigEndian, h.Sum32()); err != nil {
-		return 0, err
-	}
 	for _, h := range b.slots {
 		if err := h.writeTo(w); err != nil {
 			return 0, err
 		}
+	}
+	// Write CRC32 checksum to the end of stream.
+	if err := binary.Write(w, binary.BigEndian, h.Sum32()); err != nil {
+		return 0, err
 	}
 	if err := zw.Close(); err != nil {
 		return 0, err
@@ -385,12 +375,10 @@ func (b *subMap) writeTo(w io.Writer) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	h := crc32.NewIEEE()
-	w = io.MultiWriter(w, h)
 	if err := binary.Write(w, binary.BigEndian, uint32(len(b.keys))); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.BigEndian, b.keys); err != nil {
+	if _, err := w.Write(keysBytes(b.keys)); err != nil {
 		return err
 	}
 	if err := binary.Write(w, binary.BigEndian, b.spans); err != nil {
@@ -399,8 +387,7 @@ func (b *subMap) writeTo(w io.Writer) error {
 	if err := binary.Write(w, binary.BigEndian, b.xfs); err != nil {
 		return err
 	}
-	// Write CRC32 checksum to the end of stream.
-	return binary.Write(w, binary.BigEndian, h.Sum32())
+	return nil
 }
 
 func (b *Range) RoughSizeBytes() (sz int64) {
@@ -432,7 +419,7 @@ func (b *subMap) debug(i int, buf io.Writer) {
 	defer b.mu.RUnlock()
 	if len(b.keys) > 0 {
 		fmt.Fprintf(buf, "[%02d;0x%05x] ", i, i*slotSize)
-		fmt.Fprintf(buf, "keys: %5d/%2d, last key: %016x, filter size: %db\n",
+		fmt.Fprintf(buf, "keys: %5d/%2d, last key: %v, filter size: %db\n",
 			len(b.keys), len(b.keys)/fastSlotSize, b.keys[len(b.keys)-1], len(b.xfs))
 	}
 }
@@ -535,7 +522,7 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	return
 }
 
-func (b *Range) Find(key uint64) (int64, func(uint64) bool) {
+func (b *Range) Find(key Key) (int64, func(uint64) bool) {
 	for hr, m := range b.slots {
 		m.mu.Lock()
 		for i, k := range m.keys {
