@@ -19,6 +19,8 @@ const (
 	fastSlotNum  = 1 << 10
 	fastSlotSize = slotNum * slotSize / fastSlotNum
 	fastSlotMask = 0xfffffc00
+
+	Capcity = slotSize * slotNum
 )
 
 type Range struct {
@@ -49,6 +51,10 @@ func (b *Range) Start() int64 {
 
 func (b *Range) End() int64 {
 	return b.start + b.end
+}
+
+func (b *Range) Len() int64 {
+	return b.end + 1
 }
 
 func (b *Range) FirstKey() Key {

@@ -54,27 +54,31 @@ func TestBitmap2(t *testing.T) {
 	rand.Seed(now)
 
 	b := New(now, 2)
-
 	cached, err := ioutil.ReadFile("cache")
 	if len(cached) > 0 {
 		b, err = Unmarshal(bytes.NewReader(cached))
 	}
 	fmt.Println(err)
 
+	ba := b.AggregateSaves(func(b *Range) error {
+		_, err := b.Save("cache")
+		fmt.Println("save", err)
+		return err
+	})
+
 	path := os.Getenv("HOME") + "/dataset/dataset/full_dataset.csv"
 	f, _ := os.Open(path)
 	defer f.Close()
 
-	go func() {
-		for {
-			b.Save("cache")
-			time.Sleep(time.Second * 10)
-		}
-	}()
+	// go func() {
+	// 	for {
+	// 		b.Save("cache")
+	// 		time.Sleep(time.Second * 10)
+	// 	}
+	// }()
 
 	rd := csv.NewReader(f)
-	tso := 0
-	for i := 0; false && i < 1000; i++ {
+	for i := 0; true && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -85,20 +89,17 @@ func TestBitmap2(t *testing.T) {
 		for k := range ngram.Split(string(line)) {
 			hs = append(hs, types.StrHash(k))
 		}
-		b.Add(Uint64Key(uint64(i)), hs)
+		ba.AddAsync(Uint64Key(uint64(i)), hs)
 
 		if i%1000 == 0 {
 			log.Println(i)
 		}
-		if rand.Intn(3) == 0 {
-			tso++
-		}
-		// time.Sleep(time.Millisecond * 10)
 	}
+	ba.Close()
 
 	x := b.MarshalBinary()
 	fmt.Println(len(x), b)
-	b.Save("cache")
+	// b.Save("cache")
 
 	gs := ngram.Split("chinese")
 	if false {
