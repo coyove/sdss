@@ -396,7 +396,7 @@ func (b *Range) RoughSizeBytes() (sz int64) {
 	sz += int64(b.fastTable.GetSerializedSizeInBytes())
 	for i := range b.slots {
 		sz += int64(len(b.slots[i].xfs))
-		sz += int64(len(b.slots[i].keys)) * 12
+		sz += int64(len(b.slots[i].keys)) * (int64(KeySize) + 4)
 	}
 	return
 }
