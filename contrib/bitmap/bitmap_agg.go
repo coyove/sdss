@@ -41,16 +41,16 @@ func (r *Range) AggregateSaves(callback func(*Range) error) *SaveAggregator {
 	return fts
 }
 
-func (fts *SaveAggregator) Range() *Range {
-	return fts.current
+func (sa *SaveAggregator) Range() *Range {
+	return sa.current
 }
 
-func (fts *SaveAggregator) Close() {
-	close(fts.tasks)
-	<-fts.workerOut
+func (sa *SaveAggregator) Close() {
+	close(sa.tasks)
+	<-sa.workerOut
 }
 
-func (fts *SaveAggregator) worker() bool {
+func (sa *SaveAggregator) worker() bool {
 	start := clock.UnixNano()
 	var tasks []*aggTask
 
@@ -63,7 +63,7 @@ MORE:
 	}
 
 	select {
-	case t, ok := <-fts.tasks:
+	case t, ok := <-sa.tasks:
 		if !ok {
 			if len(tasks) == 0 {
 				return false
@@ -81,11 +81,11 @@ MORE:
 		return true
 	}
 
-	fts.survey.c += len(tasks)
-	fts.survey.r += 1
+	sa.survey.c += len(tasks)
+	sa.survey.r += 1
 
 	for i, t := range tasks {
-		if !fts.current.Add(t.key, t.values) {
+		if !sa.current.Add(t.key, t.values) {
 			for j := i; j < len(tasks); j++ {
 				tasks[j].out <- ErrBitmapFull
 			}
@@ -94,27 +94,27 @@ MORE:
 		}
 	}
 
-	err := fts.cb(fts.current)
+	err := sa.cb(sa.current)
 	for _, t := range tasks {
 		t.out <- err
 	}
 	return true
 }
 
-func (fts *SaveAggregator) AddAsync(key Key, values []uint64) chan error {
+func (sa *SaveAggregator) AddAsync(key Key, values []uint64) chan error {
 	t := &aggTask{
 		key:    key,
 		values: values,
 		out:    make(chan error, 1),
 	}
-	fts.tasks <- t
+	sa.tasks <- t
 	return t.out
 }
 
-func (fts *SaveAggregator) Add(key Key, values []uint64) error {
-	return <-fts.AddAsync(key, values)
+func (sa *SaveAggregator) Add(key Key, values []uint64) error {
+	return <-sa.AddAsync(key, values)
 }
 
-func (fts *SaveAggregator) Metrics() float64 {
-	return float64(fts.survey.c) / float64(fts.survey.r)
+func (sa *SaveAggregator) Metrics() float64 {
+	return float64(sa.survey.c) / float64(sa.survey.r)
 }
