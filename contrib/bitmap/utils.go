@@ -102,21 +102,21 @@ func Load(path string) (*Range, error) {
 	return Unmarshal(f)
 }
 
-type bitmap1024 [fastSlotNum / 64]uint64
+type bitmap1024 [fastSlotNum / 16]uint16
 
 func (b *bitmap1024) add(index uint16) { // [0, fastSlotNum)
-	(*b)[index/64] |= 1 << (index % 64)
+	(*b)[index/16] |= 1 << (index % 16)
 }
 
 func (b *bitmap1024) contains(index uint16) bool {
-	return (*b)[index/64]&(1<<(index%64)) > 0
+	return (*b)[index/16]&(1<<(index%16)) > 0
 }
 
 func (b *bitmap1024) iterate(f func(uint16) bool) {
 	for si, s := range *b {
-		for i := 0; i < 64; i++ {
+		for i := 0; i < 16; i++ {
 			if s&(1<<i) > 0 {
-				if !f(uint16(si*64 + i)) {
+				if !f(uint16(si*16 + i)) {
 					return
 				}
 			}

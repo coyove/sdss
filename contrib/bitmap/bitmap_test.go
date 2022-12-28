@@ -20,6 +20,7 @@ import (
 
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/contrib/ngram"
+	"github.com/coyove/sdss/contrib/roaring"
 	"github.com/coyove/sdss/types"
 )
 
@@ -53,17 +54,49 @@ func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
 
-	{
-		m := map[uint32]int{}
-		for i := 0; i < 800000; i++ {
-			m[rand.Uint32()&0xfffff]++
+	if true {
+		rand.Seed(clock.Unix())
+		m := roaring.New()
+		m2 := roaring.New()
+		ref := map[uint32][]uint32{}
+		for i := 0; i < 1e6; i++ {
+			x := rand.Uint32()
+			for j := 0; j < 10; j++ {
+				y := rand.Uint32()
+				m.Add(x&0xfffff000 | (y & 0xfff))
+				m2.Add(x&0xfffffc00 | (y & 0x3ff))
+				ref[x] = append(ref[x], y)
+			}
 		}
-
-		max := map[int]int{}
-		for _, v := range m {
-			max[v]++
+		ys0, total, total2 := 0, 0, 0
+		for x, ys := range ref {
+			z := x & 0xfffff000
+			tmp := []uint32{}
+			iter := m.Iterator().(*roaring.IntIterator)
+			iter.Seek(z)
+			for iter.HasNext() {
+				if v := iter.Next(); v&0xfffff000 == z {
+					tmp = append(tmp, v)
+				} else {
+					break
+				}
+			}
+			z2 := x & 0xfffffc00
+			tmp2 := []uint32{}
+			iter = m2.Iterator().(*roaring.IntIterator)
+			iter.Seek(z2)
+			for iter.HasNext() {
+				if v := iter.Next(); v&0xfffffc00 == z2 {
+					tmp2 = append(tmp2, v)
+				} else {
+					break
+				}
+			}
+			ys0 += len(ys)
+			total += len(tmp)
+			total2 += len(tmp2)
 		}
-		fmt.Println(len(m), max)
+		fmt.Println(ys0, total, total2)
 		return
 	}
 
@@ -92,7 +125,7 @@ func TestBitmap2(t *testing.T) {
 	// }()
 
 	rd := csv.NewReader(f)
-	for i := 0; false && i < 10000; i++ {
+	for i := 0; true && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break

@@ -17,9 +17,9 @@ import (
 const (
 	slotSize     = 1 << 14
 	slotNum      = 1 << 6
-	fastSlotNum  = 1 << 12
-	fastSlotSize = 1 << 8
-	fastSlotMask = 0xfffff000
+	fastSlotNum  = 1 << 10
+	fastSlotSize = 1 << 10
+	fastSlotMask = 0xfffffc00
 
 	Capcity = slotSize * slotNum
 )
@@ -183,7 +183,7 @@ func (b *subMap) join(scoresMap []uint8,
 		end1 = int64(len(b.keys)) - 1
 	}
 
-	start, z := time.Now(), 0
+	start, x, z := time.Now(), 0, 0
 
 	ms := majorScore(len(hashSort)) + len(mustHashSort)
 	as := len(hashSort) + len(mustHashSort)
@@ -217,13 +217,14 @@ func (b *subMap) join(scoresMap []uint8,
 			Id:    int64(hr*slotSize) + int64(i),
 			Score: s,
 		})
+		x++
 		if len(*res) >= count {
 			break
 		}
 	NEXT:
 	}
 
-	fmt.Println(hr, z, time.Since(start))
+	fmt.Println(hr, x, z, time.Since(start))
 }
 
 func (b *Range) Clone() *Range {
