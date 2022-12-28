@@ -53,6 +53,20 @@ func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
 
+	{
+		m := map[uint32]int{}
+		for i := 0; i < 800000; i++ {
+			m[rand.Uint32()&0xfffff]++
+		}
+
+		max := map[int]int{}
+		for _, v := range m {
+			max[v]++
+		}
+		fmt.Println(len(m), max)
+		return
+	}
+
 	b := New(now, 2)
 	cached, err := ioutil.ReadFile("cache")
 	if len(cached) > 0 {
@@ -78,7 +92,7 @@ func TestBitmap2(t *testing.T) {
 	// }()
 
 	rd := csv.NewReader(f)
-	for i := 0; true && i < 10000; i++ {
+	for i := 0; false && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break

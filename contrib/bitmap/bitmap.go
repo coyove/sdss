@@ -8,17 +8,18 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/coyove/sdss/contrib/roaring"
 	"github.com/pierrec/lz4"
 )
 
 const (
 	slotSize     = 1 << 14
 	slotNum      = 1 << 6
-	fastSlotNum  = 1 << 10
-	fastSlotSize = slotNum * slotSize / fastSlotNum
-	fastSlotMask = 0xfffffc00
+	fastSlotNum  = 1 << 12
+	fastSlotSize = 1 << 8
+	fastSlotMask = 0xfffff000
 
 	Capcity = slotSize * slotNum
 )
@@ -86,7 +87,7 @@ type subMap struct {
 
 func (b *Range) Add(key Key, v []uint64) bool {
 	if len(v) == 0 {
-		return false
+		panic("empty values")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -122,7 +123,9 @@ func (b *Range) Add(key Key, v []uint64) bool {
 
 func (b *Range) Join(qs, musts []uint64, start int64, count int, joinType int) (res []KeyTimeScore) {
 	qs, musts = dedupUint64(qs, musts)
+	fastStart := time.Now()
 	fast := b.joinFast(qs, musts, joinType)
+	fmt.Println("fast:", time.Since(fastStart))
 
 	if start == -1 {
 		start = b.end
@@ -180,12 +183,15 @@ func (b *subMap) join(scoresMap []uint8,
 		end1 = int64(len(b.keys)) - 1
 	}
 
+	start, z := time.Now(), 0
+
 	ms := majorScore(len(hashSort)) + len(mustHashSort)
 	as := len(hashSort) + len(mustHashSort)
 	for i := end1; i >= 0; i-- {
 		if !fast.contains(uint16((hr*slotSize + int(i)) / fastSlotSize)) {
 			continue
 		}
+		z++
 		s := 0
 		xf, vs := xfBuild(b.xfs[b.prevSpan(i):b.spans[i]])
 		for _, hs := range hashSort {
@@ -216,6 +222,8 @@ func (b *subMap) join(scoresMap []uint8,
 		}
 	NEXT:
 	}
+
+	fmt.Println(hr, z, time.Since(start))
 }
 
 func (b *Range) Clone() *Range {
@@ -417,6 +425,13 @@ func (b *Range) String() string {
 	for i, h := range b.slots {
 		h.debug(i, buf)
 	}
+
+	// m := map[uint32]int{}
+	// b.fastTable.Iterate(func(x uint32) bool {
+	// 	m[x&0xfffff300]++
+	// 	return true
+	// })
+	// fmt.Fprintf(buf, "test: %d", len(m))
 	return buf.String()
 }
 
@@ -465,16 +480,15 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	}
 	sort.Slice(hashSort, func(i, j int) bool { return hashSort[i].h < hashSort[j].h })
 
-	for iter := b.fastTable.Iterator(); len(hashSort) > 0; {
+	for iter := b.fastTable.Iterator().(*roaring.IntIterator); len(hashSort) > 0; {
 		hs := hashSort[0]
 		hashSort = hashSort[1:]
 
-		iter.AdvanceIfNeeded(hs.h)
+		iter.Seek(hs.h)
 		for iter.HasNext() {
-			h2 := iter.PeekNext()
+			h2 := iter.Next()
 			if h2&fastSlotMask == hs.h {
 				hs.add(uint16(h2 - hs.h))
-				iter.Next()
 			} else {
 				break
 			}

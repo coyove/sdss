@@ -83,6 +83,10 @@ MORE:
 
 	sa.survey.c += len(tasks)
 	sa.survey.r += 1
+	if sa.survey.r > 100 {
+		sa.survey.c = int(sa.Metrics())
+		sa.survey.r = 1
+	}
 
 	for i, t := range tasks {
 		if !sa.current.Add(t.key, t.values) {
