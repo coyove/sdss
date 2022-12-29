@@ -17,9 +17,9 @@ import (
 const (
 	slotSize     = 1 << 14
 	slotNum      = 1 << 6
-	fastSlotNum  = 1 << 10
-	fastSlotSize = 1 << 10
-	fastSlotMask = 0xfffffc00
+	fastSlotNum  = 1 << 12
+	fastSlotSize = 1 << 8
+	fastSlotMask = 0xfffff000
 
 	Capcity = slotSize * slotNum
 )

@@ -59,44 +59,61 @@ func TestBitmap2(t *testing.T) {
 		m := roaring.New()
 		m2 := roaring.New()
 		ref := map[uint32][]uint32{}
-		for i := 0; i < 1e6; i++ {
+		for i := 0; i < 2e6; i++ {
 			x := rand.Uint32()
+			h := h16(x, 0)
 			for j := 0; j < 10; j++ {
-				y := rand.Uint32()
-				m.Add(x&0xfffff000 | (y & 0xfff))
-				m2.Add(x&0xfffffc00 | (y & 0x3ff))
+				y := uint32(j)*50 + rand.Uint32()%50
+				m.Add(h[0]&0xfffff000 | (y & 0xfff))
+				m.Add(h[1]&0xfffff000 | (y & 0xfff))
+				m2.Add(h[0]&0xfffffc00 | (y & 0x3ff))
+				m2.Add(h[1]&0xfffffc00 | (y & 0x3ff))
 				ref[x] = append(ref[x], y)
 			}
 		}
 		ys0, total, total2 := 0, 0, 0
 		for x, ys := range ref {
-			z := x & 0xfffff000
-			tmp := []uint32{}
-			iter := m.Iterator().(*roaring.IntIterator)
-			iter.Seek(z)
-			for iter.HasNext() {
-				if v := iter.Next(); v&0xfffff000 == z {
-					tmp = append(tmp, v)
-				} else {
-					break
+			h := h16(x, 0)
+			tmp := [2]*roaring.Bitmap{roaring.New(), roaring.New()}
+			for i := 0; i < 2; i++ {
+				z := h[i] & 0xfffff000
+				iter := m.Iterator().(*roaring.IntIterator)
+				iter.Seek(z)
+				for first := true; iter.HasNext(); first = false {
+					v := iter.Next()
+					if v&0xfffff000 == z {
+						tmp[i].Add(v & 0xfff)
+					} else {
+						if first {
+							panic(fmt.Sprintf("%x %x", v, z))
+						}
+						break
+					}
 				}
 			}
-			z2 := x & 0xfffffc00
-			tmp2 := []uint32{}
-			iter = m2.Iterator().(*roaring.IntIterator)
-			iter.Seek(z2)
-			for iter.HasNext() {
-				if v := iter.Next(); v&0xfffffc00 == z2 {
-					tmp2 = append(tmp2, v)
-				} else {
-					break
-				}
-			}
+			tmp[0].And(tmp[1])
 			ys0 += len(ys)
-			total += len(tmp)
-			total2 += len(tmp2)
+			total += int(tmp[0].GetCardinality())
 		}
-		fmt.Println(ys0, total, total2)
+		for x := range ref {
+			h := h16(x, 0)
+			tmp := [2]*roaring.Bitmap{roaring.New(), roaring.New()}
+			for i := 0; i < 2; i++ {
+				z := h[i] & 0xfffffc00
+				iter := m2.Iterator().(*roaring.IntIterator)
+				iter.Seek(z)
+				for iter.HasNext() {
+					if v := iter.Next(); v&0xfffffc00 == z {
+						tmp[i].Add(v & 0x3ff)
+					} else {
+						break
+					}
+				}
+			}
+			tmp[0].And(tmp[1])
+			total2 += int(tmp[0].GetCardinality())
+		}
+		fmt.Println(ys0, total, m.GetCardinality(), total2, m2.GetCardinality())
 		return
 	}
 
