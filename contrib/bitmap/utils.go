@@ -7,6 +7,8 @@ import (
 	"math/bits"
 	"os"
 	"time"
+
+	"github.com/coyove/sdss/contrib/clock"
 )
 
 const (
@@ -18,6 +20,10 @@ const (
 type meterWriter struct {
 	io.Writer
 	size int
+}
+
+func (m *meterWriter) Close() error {
+	return nil
 }
 
 func (m *meterWriter) Write(p []byte) (int, error) {
@@ -88,17 +94,17 @@ func (jm JoinMetrics) String() string {
 	return x
 }
 
-func (b *Range) Save(path string) (int, error) {
+func (b *Range) Save(path string, compress bool) (int, error) {
 	b.mfmu.Lock()
 	defer b.mfmu.Unlock()
 
-	bakpath := fmt.Sprintf("%s.%d.mtfbak", path, b.Start())
+	bakpath := fmt.Sprintf("%s.%d.mtfbak", path, clock.Unix())
 
 	f, err := os.Create(bakpath)
 	if err != nil {
 		return 0, err
 	}
-	sz, err := b.Marshal(f)
+	sz, err := b.Marshal(f, compress)
 	f.Close()
 	if err != nil {
 		return 0, err

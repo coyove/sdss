@@ -346,19 +346,26 @@ func readSubMap(rd io.Reader) (*subMap, error) {
 	return b, nil
 }
 
-func (b *Range) MarshalBinary() []byte {
+func (b *Range) MarshalBinary(compress bool) []byte {
 	p := &bytes.Buffer{}
-	b.Marshal(p)
+	b.Marshal(p, compress)
 	return p.Bytes()
 }
 
-func (b *Range) Marshal(w io.Writer) (int, error) {
+func (b *Range) Marshal(w io.Writer, compress bool) (int, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	mw := &meterWriter{Writer: w}
-	mw.Write([]byte{4})
-	zw := lz4.NewWriter(mw)
+
+	var zw io.WriteCloser
+	if compress {
+		mw.Write([]byte{4})
+		zw = lz4.NewWriter(mw)
+	} else {
+		mw.Write([]byte{1})
+		zw = mw
+	}
 
 	h := crc32.NewIEEE()
 	w = io.MultiWriter(zw, h)

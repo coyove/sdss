@@ -125,7 +125,7 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(err)
 
 	ba := b.AggregateSaves(func(b *Range) error {
-		_, err := b.Save("cache")
+		_, err := b.Save("cache", false)
 		fmt.Println("save", err)
 		return err
 	})
@@ -161,8 +161,7 @@ func TestBitmap2(t *testing.T) {
 	}
 	ba.Close()
 
-	x := b.MarshalBinary()
-	fmt.Println(len(x), b)
+	fmt.Println(len(b.MarshalBinary(true)), b)
 	// b.Save("cache")
 
 	gs := ngram.Split("chinese")
