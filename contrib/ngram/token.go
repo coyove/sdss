@@ -149,17 +149,21 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 	if s.lastSplitText != "" {
 		lastr, _ := utf8.DecodeLastRuneInString(s.lastSplitText)
 		if (lastr <= utf8.RuneSelf) != (r <= utf8.RuneSelf) {
-			s.tmpbuf.Reset()
-			s.tmpbuf.WriteRune(unicode.ToLower(cv(lastr)))
-			s.tmpbuf.WriteRune(unicode.ToLower(cv(r)))
-			n := s.tmpbuf.Len()
-			s.tmpbuf.WriteRune(lastr)
-			s.tmpbuf.WriteRune(r)
-			x := s.tmpbuf.String()
+			lastrn := normal(lastr)
+			rn := normal(r)
+			if (lastrn <= utf8.RuneSelf) != (rn <= utf8.RuneSelf) { // test again
+				s.tmpbuf.Reset()
+				s.tmpbuf.WriteRune(unicode.ToLower(lastrn))
+				s.tmpbuf.WriteRune(unicode.ToLower(rn))
+				n := s.tmpbuf.Len()
+				s.tmpbuf.WriteRune(lastr)
+				s.tmpbuf.WriteRune(r)
+				x := s.tmpbuf.String()
 
-			s.freq[x[:n]]++
-			res[x[:n]] = Token{Name: x[:n], Raw: x[n:]} // , Quoted: inQuote}
-			s.total++
+				s.freq[x[:n]]++
+				res[x[:n]] = Token{Name: x[:n], Raw: x[n:]} // , Quoted: inQuote}
+				s.total++
+			}
 		}
 	}
 	// fmt.Println(lastSplitText, v)

@@ -143,7 +143,6 @@ func (b *Range) Join(qs, musts []uint64, start int64, joinType int, f func(KeyId
 	}
 
 	startSlot := int(start / slotSize)
-	scoresMap := make([]uint8, slotSize)
 
 	for i := startSlot; i >= 0; i-- {
 		if fast[i] == 0 {
@@ -155,10 +154,7 @@ func (b *Range) Join(qs, musts []uint64, start int64, joinType int, f func(KeyId
 		}
 
 		m := b.slots[i]
-		for i := range scoresMap {
-			scoresMap[i] = 0
-		}
-		exit := m.join(scoresMap, qs, musts, i, &fast, startOffset, joinType, b.start, &jm, f)
+		exit := m.join(qs, musts, i, &fast, startOffset, joinType, b.start, &jm, f)
 		if exit {
 			break
 		}
@@ -175,7 +171,7 @@ func (b *subMap) prevSpan(i int64) uint32 {
 	return b.spans[i-1]
 }
 
-func (b *subMap) join(scoresMap []uint8,
+func (b *subMap) join(
 	hashSort, mustHashSort []uint64, hr int, fast *bitmap1024,
 	end int64, joinType int, baseStart int64, jm *JoinMetrics, f func(KeyIdScore) bool) bool {
 
