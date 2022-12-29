@@ -168,7 +168,7 @@ func mergeBitmaps(ns string, includes []string, start, end int64, f func([]strin
 		hashes = append(hashes, types.StrHash(token))
 	}
 
-	var final []bitmap.KeyTimeScore
+	var final []bitmap.KeyIdScore
 	accessBitmapReadonly(ns, start, func(b *NSBitmap) {
 		if b == nil {
 			return

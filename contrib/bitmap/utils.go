@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/bits"
 	"os"
+	"time"
 )
 
 const (
@@ -60,10 +61,31 @@ func combinehash(k1, seed uint32) uint32 {
 	return h1
 }
 
-type KeyTimeScore struct {
+type KeyIdScore struct {
 	Key   Key
 	Id    int64
 	Score int
+}
+
+type JoinMetrics struct {
+	Start       int64
+	FastElapsed time.Duration
+	Elapsed     time.Duration
+	Slots       [slotNum]struct {
+		Scans, Hits int
+		Elapsed     time.Duration
+	}
+}
+
+func (jm JoinMetrics) String() string {
+	x := fmt.Sprintf("%d: %vus = %v(fast)", jm.Start, jm.Elapsed.Microseconds(), jm.FastElapsed.Microseconds())
+	for i := len(jm.Slots) - 1; i >= 0; i-- {
+		s := jm.Slots[i]
+		if s.Scans > 0 {
+			x += fmt.Sprintf(" + %d(#%d: %d/%d)", s.Elapsed.Microseconds(), i, s.Hits, s.Scans)
+		}
+	}
+	return x
 }
 
 func (b *Range) Save(path string) (int, error) {

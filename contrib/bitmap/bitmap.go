@@ -46,6 +46,10 @@ func New(start int64, hashNum int8) *Range {
 	return d
 }
 
+func (b *Range) SetStart(v int64) {
+	b.start = v
+}
+
 func (b *Range) Start() int64 {
 	return b.start
 }
@@ -121,11 +125,13 @@ func (b *Range) Add(key Key, v []uint64) bool {
 	return true
 }
 
-func (b *Range) Join(qs, musts []uint64, start int64, count int, joinType int) (res []KeyTimeScore) {
+func (b *Range) Join(qs, musts []uint64, start int64, joinType int, f func(KeyIdScore) bool) (jm JoinMetrics) {
 	qs, musts = dedupUint64(qs, musts)
+
 	fastStart := time.Now()
 	fast := b.joinFast(qs, musts, joinType)
-	fmt.Println("fast:", time.Since(fastStart))
+	jm.FastElapsed = time.Since(fastStart)
+	jm.Start = b.start
 
 	if start == -1 {
 		start = b.end
@@ -152,15 +158,13 @@ func (b *Range) Join(qs, musts []uint64, start int64, count int, joinType int) (
 		for i := range scoresMap {
 			scoresMap[i] = 0
 		}
-		m.join(scoresMap, qs, musts, i, &fast, startOffset, joinType, count, &res)
-		if count > 0 && len(res) >= count {
+		exit := m.join(scoresMap, qs, musts, i, &fast, startOffset, joinType, b.start, &jm, f)
+		if exit {
 			break
 		}
 	}
 
-	for i := range res {
-		res[i].Id += b.start
-	}
+	jm.Elapsed = time.Since(fastStart)
 	return
 }
 
@@ -173,7 +177,7 @@ func (b *subMap) prevSpan(i int64) uint32 {
 
 func (b *subMap) join(scoresMap []uint8,
 	hashSort, mustHashSort []uint64, hr int, fast *bitmap1024,
-	end int64, joinType int, count int, res *[]KeyTimeScore) {
+	end int64, joinType int, baseStart int64, jm *JoinMetrics, f func(KeyIdScore) bool) bool {
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -183,7 +187,8 @@ func (b *subMap) join(scoresMap []uint8,
 		end1 = int64(len(b.keys)) - 1
 	}
 
-	start, x, z := time.Now(), 0, 0
+	start := time.Now()
+	exit := false
 
 	ms := majorScore(len(hashSort)) + len(mustHashSort)
 	as := len(hashSort) + len(mustHashSort)
@@ -191,7 +196,7 @@ func (b *subMap) join(scoresMap []uint8,
 		if !fast.contains(uint16((hr*slotSize + int(i)) / fastSlotSize)) {
 			continue
 		}
-		z++
+		jm.Slots[hr].Scans++
 		s := 0
 		xf, vs := xfBuild(b.xfs[b.prevSpan(i):b.spans[i]])
 		for _, hs := range hashSort {
@@ -212,19 +217,21 @@ func (b *subMap) join(scoresMap []uint8,
 		if joinType == JoinAll && s < as {
 			goto NEXT
 		}
-		*res = append(*res, KeyTimeScore{
+
+		jm.Slots[hr].Hits++
+		if !f(KeyIdScore{
 			Key:   b.keys[i],
-			Id:    int64(hr*slotSize) + int64(i),
+			Id:    int64(hr*slotSize) + int64(i) + baseStart,
 			Score: s,
-		})
-		x++
-		if len(*res) >= count {
+		}) {
+			exit = true
 			break
 		}
 	NEXT:
 	}
 
-	fmt.Println(hr, x, z, time.Since(start))
+	jm.Slots[hr].Elapsed = time.Since(start)
+	return exit
 }
 
 func (b *Range) Clone() *Range {
@@ -419,20 +426,24 @@ func (b *Range) RoughSizeBytes() (sz int64) {
 func (b *Range) String() string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+
+	start := time.Now()
 	buf := &bytes.Buffer{}
-	fmt.Fprintf(buf, "[%08d] tail end: %d, bf hash: %d, fast table: %d (size=%db), rough size: %db\n",
-		b.start, b.end, b.hashNum,
-		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes(), b.RoughSizeBytes())
+
+	m := roaring.New()
+	b.fastTable.Iterate(func(x uint32) bool {
+		m.Add(x & fastSlotMask)
+		return true
+	})
+
+	fmt.Fprintf(buf, "range: %d-%d, count: %d, rough size: %db\n", b.start, b.start+b.end, b.end, b.RoughSizeBytes())
+	fmt.Fprintf(buf, "fast table: num=%d, size=%db, #hash=%d, bf=%d\n",
+		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes(), m.GetCardinality(), b.hashNum)
 	for i, h := range b.slots {
 		h.debug(i, buf)
 	}
 
-	// m := map[uint32]int{}
-	// b.fastTable.Iterate(func(x uint32) bool {
-	// 	m[x&0xfffff300]++
-	// 	return true
-	// })
-	// fmt.Fprintf(buf, "test: %d", len(m))
+	fmt.Fprintf(buf, "collected in %v", time.Since(start))
 	return buf.String()
 }
 

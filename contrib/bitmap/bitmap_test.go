@@ -54,12 +54,12 @@ func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
 
-	if true {
+	if false {
 		rand.Seed(clock.Unix())
 		m := roaring.New()
 		m2 := roaring.New()
 		ref := map[uint32][]uint32{}
-		for i := 0; i < 2e6; i++ {
+		for i := 0; i < 1e6; i++ {
 			x := rand.Uint32()
 			h := h16(x, 0)
 			for j := 0; j < 10; j++ {
@@ -142,7 +142,7 @@ func TestBitmap2(t *testing.T) {
 	// }()
 
 	rd := csv.NewReader(f)
-	for i := 0; true && i < 10000; i++ {
+	for i := 0; false && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -188,14 +188,19 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 	}
 
 	start := time.Now()
-	var results []KeyTimeScore
+	var results []KeyIdScore
 	wg := sync.WaitGroup{}
 	for i := 0; i < 1; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			// results = b.Join(q, nil, 1670192109, 50, JoinMajor)
-			results = b.Join(q, nil, b.End(), 50, JoinMajor)
+			var tmp []KeyIdScore
+			fmt.Println(b.Join(q, nil, b.End(), JoinMajor, func(kis KeyIdScore) bool {
+				tmp = append(tmp, kis)
+				return len(tmp) < 50
+			}))
+			results = tmp
 		}()
 	}
 	wg.Wait()
