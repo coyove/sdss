@@ -10,9 +10,10 @@ import (
 var ErrBitmapFull = fmt.Errorf("bitmap full (%d)", Capcity)
 
 type aggTask struct {
-	key    Key
-	values []uint64
-	out    chan error
+	key      Key
+	values   []uint64
+	heValues []uint64
+	out      chan error
 }
 
 type SaveAggregator struct {
@@ -89,7 +90,7 @@ MORE:
 	}
 
 	for i, t := range tasks {
-		if !sa.current.Add(t.key, t.values) {
+		if !sa.current.AddHighEntropy(t.key, t.values, t.heValues) {
 			for j := i; j < len(tasks); j++ {
 				tasks[j].out <- ErrBitmapFull
 			}
@@ -105,18 +106,19 @@ MORE:
 	return true
 }
 
-func (sa *SaveAggregator) AddAsync(key Key, values []uint64) chan error {
+func (sa *SaveAggregator) AddAsync(key Key, values, heValues []uint64) chan error {
 	t := &aggTask{
-		key:    key,
-		values: values,
-		out:    make(chan error, 1),
+		key:      key,
+		values:   values,
+		heValues: heValues,
+		out:      make(chan error, 1),
 	}
 	sa.tasks <- t
 	return t.out
 }
 
-func (sa *SaveAggregator) Add(key Key, values []uint64) error {
-	return <-sa.AddAsync(key, values)
+func (sa *SaveAggregator) Add(key Key, values, heValues []uint64) error {
+	return <-sa.AddAsync(key, values, heValues)
 }
 
 func (sa *SaveAggregator) Metrics() float64 {

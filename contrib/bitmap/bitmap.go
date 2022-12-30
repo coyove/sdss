@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	slotSize     = 1 << 14
-	slotNum      = 1 << 6
-	fastSlotNum  = 1 << 12
-	fastSlotSize = 1 << 8
-	fastSlotMask = 0xfffff000
+	slotSize        = 1 << 14
+	slotNum         = 1 << 6
+	fastSlotNum     = 1 << 12
+	fastSlotSize    = 1 << 8
+	fastSlotMask    = 0xfffff000
+	highEntropyMask = 0xffff0000
 
 	Capcity = slotSize * slotNum
 )
@@ -89,8 +90,12 @@ type subMap struct {
 	xfs   []byte
 }
 
-func (b *Range) Add(key Key, v []uint64) bool {
-	if len(v) == 0 {
+func (b *Range) Add(key Key, values []uint64) bool {
+	return b.AddHighEntropy(key, values, nil)
+}
+
+func (b *Range) AddHighEntropy(key Key, values, heValues []uint64) bool {
+	if len(values)+len(heValues) == 0 {
 		panic("empty values")
 	}
 	b.mu.Lock()
@@ -102,18 +107,28 @@ func (b *Range) Add(key Key, v []uint64) bool {
 
 	b.end++
 	offset := uint32(b.end / fastSlotSize)
-	for _, v := range v {
+	for _, v := range values {
 		h := h16(uint32(v), b.start)
 		for i := 0; i < int(b.hashNum); i++ {
 			b.fastTable.Add(h[i]&fastSlotMask | offset)
 		}
 	}
 
+	for _, v := range heValues {
+		// For high entropy values, we only store their high 16 bits into fastTable.
+		h := h16(uint32(v), b.start)
+		for i := 0; i < int(b.hashNum); i++ {
+			b.fastTable.Add(h[i]&highEntropyMask | offset)
+		}
+	}
+
+	values = append(values, heValues...)
+
 	m := b.slots[b.end/slotSize]
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	xf := xfNew(v)
+	xf := xfNew(values)
 
 	m.keys = append(m.keys, key)
 	m.xfs = append(m.xfs, xf...)
@@ -125,11 +140,11 @@ func (b *Range) Add(key Key, v []uint64) bool {
 	return true
 }
 
-func (b *Range) Join(qs, musts []uint64, start int64, joinType int, f func(KeyIdScore) bool) (jm JoinMetrics) {
-	qs, musts = dedupUint64(qs, musts)
+func (b *Range) Join(qs, musts, heMusts []uint64, start int64, joinType int, f func(KeyIdScore) bool) (jm JoinMetrics) {
+	qs, musts, heMusts = dedupUint64(qs, musts, heMusts)
 
 	fastStart := time.Now()
-	fast := b.joinFast(qs, musts, joinType)
+	fast := b.joinFast(qs, musts, heMusts, joinType)
 	jm.FastElapsed = time.Since(fastStart)
 	jm.Start = b.start
 
@@ -143,6 +158,7 @@ func (b *Range) Join(qs, musts []uint64, start int64, joinType int, f func(KeyId
 	}
 
 	startSlot := int(start / slotSize)
+	musts = append(musts, heMusts...)
 
 	for i := startSlot; i >= 0; i-- {
 		if fast[i] == 0 {
@@ -439,7 +455,7 @@ func (b *Range) String() string {
 		return true
 	})
 
-	fmt.Fprintf(buf, "range: %d-%d, count: %d, rough size: %db\n", b.start, b.start+b.end, b.end, b.RoughSizeBytes())
+	fmt.Fprintf(buf, "range: %d-%d, count: %d, rough size: %db\n", b.start, b.End(), b.Len(), b.RoughSizeBytes())
 	fmt.Fprintf(buf, "fast table: num=%d, size=%db, #hash=%d, bf=%d\n",
 		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes(), m.GetCardinality(), b.hashNum)
 	for i, h := range b.slots {
@@ -460,7 +476,7 @@ func (b *subMap) debug(i int, buf io.Writer) {
 	}
 }
 
-func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
+func (b *Range) joinFast(qs, musts, heMusts []uint64, joinType int) (res bitmap1024) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -479,6 +495,16 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 		for i := 0; i < int(b.hashNum); i++ {
 			x := &hashState{h: h[i] & fastSlotMask}
 			hashStates[h[i]] = x // TODO: duplicated hashes
+			hashSort = append(hashSort, x)
+		}
+		mustHashes = append(mustHashes, h)
+	}
+
+	for _, v := range heMusts {
+		h := h16(uint32(v), b.start)
+		for i := 0; i < int(b.hashNum); i++ {
+			x := &hashState{h: h[i] & highEntropyMask}
+			hashStates[h[i]] = x
 			hashSort = append(hashSort, x)
 		}
 		mustHashes = append(mustHashes, h)
@@ -515,37 +541,37 @@ func (b *Range) joinFast(qs, musts []uint64, joinType int) (res bitmap1024) {
 	var final bitmap1024
 	for i := range qsHashes {
 		raw := qsHashes[i]
-		m := &hashStates[raw[0]].bitmap1024
+		m := hashStates[raw[0]].bitmap1024
 		for i := 1; i < int(b.hashNum); i++ {
 			m.and(&hashStates[raw[i]].bitmap1024)
 		}
 		if joinType == JoinAll {
 			if i == 0 {
-				final = *m
+				final = m
 			} else {
-				final.and(m)
+				final.and(&m)
 			}
 		} else {
 			m.iterate(func(x uint16) bool { scores[x]++; return true })
-			final.or(m)
+			final.or(&m)
 		}
 	}
 
 	for i := range mustHashes {
 		raw := mustHashes[i]
-		m := &hashStates[raw[0]].bitmap1024
+		m := hashStates[raw[0]].bitmap1024
 		for i := 1; i < int(b.hashNum); i++ {
 			m.and(&hashStates[raw[i]].bitmap1024)
 		}
 		m.iterate(func(x uint16) bool { scores[x]++; return true })
 		if len(qsHashes) == 0 && i == 0 {
-			final = *m
+			final = m
 		} else {
-			final.and(m)
+			final.and(&m)
 		}
 	}
 
-	ms := majorScore(len(qs)) + len(musts)
+	ms := majorScore(len(qs)) + len(musts) + len(heMusts)
 	final.iterate(func(offset uint16) bool {
 		s := int(scores[offset])
 		if joinType == JoinMajor && s < ms {

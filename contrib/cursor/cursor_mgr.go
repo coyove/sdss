@@ -3,17 +3,23 @@ package cursor
 import (
 	"bytes"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/coyove/sdss/contrib/clock"
 )
 
 type CursorManager struct {
-	Get func(string) ([]byte, bool)
-	Set func(string, []byte)
+	idx, step int64
+	init      sync.Once
+	Get       func(string) ([]byte, bool)
+	Set       func(string, []byte)
 }
 
 func (cm *CursorManager) Save(c *Cursor) string {
-	key := fmt.Sprintf("%x!%x!%x", c.NextMap, c.NextId, clock.Id())
+	cm.init.Do(func() { cm.step = clock.Unix() % 16 })
+	key := fmt.Sprintf("%x!%x!%x!%d.%d", c.NextMap, c.NextId, atomic.AddInt64(&cm.idx, cm.step),
+		c.m.GetCardinality()/2, c.GetMarshalSize())
 	cm.Set(key, c.MarshalBinary())
 	return key
 }
@@ -22,8 +28,8 @@ func (cm *CursorManager) Load(k string) (c *Cursor, err error) {
 	data, ok := cm.Get(k)
 	if !ok {
 		var nm, ni, tmp int64
-		n, _ := fmt.Sscanf(k, "%x!%x!%x", &nm, &ni, &tmp)
-		if n != 3 {
+		n, _ := fmt.Sscanf(k, "%x!%x!%x!%d.%d", &nm, &ni, &tmp, &tmp, &tmp)
+		if n != 5 {
 			return nil, fmt.Errorf("cursor manager: invalid key")
 		}
 		c = New()

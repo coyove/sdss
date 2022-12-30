@@ -142,7 +142,7 @@ func TestBitmap2(t *testing.T) {
 	// }()
 
 	rd := csv.NewReader(f)
-	for i := 0; true && i < 10000; i++ {
+	for i := 0; false && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
@@ -153,7 +153,7 @@ func TestBitmap2(t *testing.T) {
 		for k := range ngram.Split(string(line)) {
 			hs = append(hs, types.StrHash(k))
 		}
-		ba.AddAsync(Uint64Key(uint64(i)), hs)
+		ba.AddAsync(Uint64Key(uint64(i)), hs, []uint64{uint64(i)})
 
 		if i%1000 == 0 {
 			log.Println(i)
@@ -195,7 +195,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 			defer wg.Done()
 			// results = b.Join(q, nil, 1670192109, 50, JoinMajor)
 			var tmp []KeyIdScore
-			fmt.Println(b.Join(q, nil, b.End(), JoinMajor, func(kis KeyIdScore) bool {
+			fmt.Println(b.Join(nil, nil, []uint64{600}, b.End(), JoinMajor, func(kis KeyIdScore) bool {
 				tmp = append(tmp, kis)
 				return len(tmp) < 50
 			}))

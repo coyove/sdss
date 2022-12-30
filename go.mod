@@ -7,13 +7,11 @@ require (
 	github.com/aaaton/golem/v4 v4.0.1
 	github.com/aaaton/golem/v4/dicts/en v1.0.1
 	github.com/aws/aws-sdk-go v1.28.2
-	github.com/bits-and-blooms/bitset v1.3.1
-	github.com/bits-and-blooms/bloom/v3 v3.3.1
 	github.com/coyove/common v0.0.0-20210601082815-1e7f2ca0bb84
 	github.com/frankban/quicktest v1.14.4 // indirect
-	github.com/mschoch/smat v0.2.0
 	github.com/pierrec/lz4 v2.6.1+incompatible
 	github.com/sirupsen/logrus v1.8.1
 	golang.org/x/sync v0.1.0
 	golang.org/x/text v0.4.0
+	gopkg.in/yaml.v3 v3.0.0-20200605160147-a5ece683394c // indirect
 )

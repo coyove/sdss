@@ -185,7 +185,7 @@ func majorScore(s int) int {
 	return s * 4 / 5
 }
 
-func dedupUint64(qs, musts []uint64) ([]uint64, []uint64) {
+func dedupUint64(qs, musts, heMusts []uint64) ([]uint64, []uint64, []uint64) {
 	f1 := func(a []uint64) []uint64 {
 		if len(a) <= 1 {
 			return a
@@ -206,9 +206,9 @@ func dedupUint64(qs, musts []uint64) ([]uint64, []uint64) {
 		return a
 	}
 
-	qs, musts = f1(qs), f1(musts)
+	qs, musts, heMusts = f1(qs), f1(musts), f1(heMusts)
 	if len(qs) == 0 || len(musts) == 0 {
-		return qs, musts
+		return qs, musts, heMusts
 	}
 
 	for i := len(qs) - 1; i >= 0; i-- {
@@ -219,5 +219,5 @@ func dedupUint64(qs, musts []uint64) ([]uint64, []uint64) {
 			}
 		}
 	}
-	return qs, musts
+	return qs, musts, heMusts
 }
