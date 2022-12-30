@@ -3,6 +3,7 @@ package ngram
 import (
 	"bytes"
 	_ "embed"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -86,7 +87,7 @@ func cv(in rune) rune {
 }
 
 func lemma(word string) string {
-	return englishLemma.Lemma(removeAccents(word))
+	return strings.ToLower(englishLemma.Lemma(removeAccents(word)))
 }
 
 func removeAccents(s string) string {
