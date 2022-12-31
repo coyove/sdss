@@ -229,6 +229,22 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 }
 
 func TestCollision(t *testing.T) {
+	tot := 0
+	m2 := New(0, 2)
+	for i := 0; i < 1e6; i++ {
+		m := roaring.New()
+		var v []uint64
+		for i := 0; i < 16; i++ {
+			x := rand.Uint64()&0xfffff0 + uint64(i)
+			m.Add(uint32(x))
+			v = append(v, x)
+		}
+		m2.Add(Uint64Key(uint64(i)), v)
+		tot += int(m.GetSerializedSizeInBytes())
+	}
+	fmt.Println(tot, len(m2.MarshalBinary(false)), m2.fastTable.GetSerializedSizeInBytes())
+	return
+
 	rand.Seed(clock.Unix())
 	x := []uint64{}
 	for i := 0; i < 1e3; i++ {

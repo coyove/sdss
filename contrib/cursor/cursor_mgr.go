@@ -19,7 +19,7 @@ type CursorManager struct {
 func (cm *CursorManager) Save(c *Cursor) string {
 	cm.init.Do(func() { cm.step = clock.Unix() % 16 })
 	key := fmt.Sprintf("%x!%x!%x!%d.%d", c.NextMap, c.NextId, atomic.AddInt64(&cm.idx, cm.step),
-		c.m.GetCardinality()/2, c.GetMarshalSize())
+		0, 0)
 	cm.Set(key, c.MarshalBinary())
 	return key
 }

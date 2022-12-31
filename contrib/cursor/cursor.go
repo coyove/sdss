@@ -5,23 +5,52 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
-	"hash/crc32"
 	"io"
+	"math"
+	"math/bits"
 	"strings"
+	"sync"
+	"unsafe"
 
+	"github.com/FastFilter/xorfilter"
 	"github.com/coyove/sdss/contrib/bitmap"
-	"github.com/coyove/sdss/contrib/roaring"
 )
 
+const compactBFHash = 3
+
+var (
+	compactThreshold = []int{128, 256, 512, 1024, 2048, 4096, 8192}
+	compactBytesSize = func() (a []int) {
+		for i := range compactThreshold {
+			bf := compactBFHash
+			capacity := 32 + uint32(math.Ceil(1.23*float64(compactThreshold[i]*bf)))
+			capacity = capacity / 3 * 3 // round it down to a multiple of 3
+			a = append(a, int(capacity))
+		}
+		return
+	}()
+)
+
+func at(a []int, idx int) int {
+	if idx < len(a) {
+		return a[idx]
+	}
+	return a[len(a)-1]
+}
+
 type Cursor struct {
-	NextMap int64
-	NextId  int64
-	m       *roaring.Bitmap
+	NextMap  int64
+	NextId   int64
+	pendings []uint64
+	compacts []xorfilter.Xor8
+
+	_dedup map[uint64]struct{}
+	_mu    sync.RWMutex
 }
 
 func New() *Cursor {
 	c := &Cursor{}
-	c.m = roaring.New()
+	c._dedup = map[uint64]struct{}{}
 	return c
 }
 
@@ -38,78 +67,126 @@ func Read(rd io.Reader) (*Cursor, bool) {
 		return nil, false
 	}
 
-	c.m = roaring.New()
-
-	var typ byte
-	if err := binary.Read(rd, binary.BigEndian, &typ); err != nil {
+	var pendingsCount uint16
+	if err := binary.Read(rd, binary.BigEndian, &pendingsCount); err != nil {
 		return nil, false
 	}
-	if typ == 0 {
-		for {
-			var d uint32
-			if err := binary.Read(rd, binary.BigEndian, &d); err != nil {
-				if err == io.EOF {
-					break
-				}
-				return nil, false
-			}
-			c.m.Add(d)
-		}
-	} else {
-		if _, err := c.m.ReadFrom(rd); err != nil {
+
+	c.pendings = make([]uint64, pendingsCount)
+	c._dedup = map[uint64]struct{}{}
+	if err := binary.Read(rd, binary.BigEndian, c.pendings); err != nil {
+		return nil, false
+	}
+	for _, p := range c.pendings {
+		c._dedup[p] = struct{}{}
+	}
+
+	var compactsCount uint16
+	if err := binary.Read(rd, binary.BigEndian, &compactsCount); err != nil {
+		return nil, false
+	}
+
+	c.compacts = make([]xorfilter.Xor8, compactsCount)
+	tmp := make([]byte, compactBytesSize[len(compactBytesSize)-1]+8)
+	for i := range c.compacts {
+		sz := at(compactBytesSize, i)
+		tmp = tmp[:sz+8]
+		if err := binary.Read(rd, binary.BigEndian, tmp); err != nil {
 			return nil, false
 		}
+		c.compacts[i].BlockLength = uint32(sz) / 3
+		c.compacts[i].Seed = binary.BigEndian.Uint64(tmp[:8])
+		c.compacts[i].Fingerprints = append([]byte{}, tmp[8:]...)
 	}
 	return c, true
 }
 
-func (c *Cursor) Add(key bitmap.Key) {
+func (c *Cursor) clearDedup() {
+	for k := range c._dedup {
+		delete(c._dedup, k)
+	}
+}
+
+func (c *Cursor) Add(key bitmap.Key) bool {
+	c._mu.Lock()
+	defer c._mu.Unlock()
+
 	h := hashCode(key)
-	c.m.Add(h[0])
-	c.m.Add(h[1])
+	_, exist := c.contains(h, expandHash(h))
+	if exist {
+		return false
+	}
+
+	c.pendings = append(c.pendings, h)
+	c._dedup[h] = struct{}{}
+
+	if len(c.pendings) == at(compactThreshold, len(c.compacts)) {
+		bf := compactBFHash
+		tmp := make([]uint64, 0, len(c.pendings)*bf)
+		c.clearDedup()
+		for _, p := range c.pendings {
+			h := expandHash(p)
+			for i := 0; i < bf; i++ {
+				for {
+					if _, ok := c._dedup[h[i]]; ok {
+						h[i]++
+					} else {
+						break
+					}
+				}
+				tmp = append(tmp, h[i])
+				c._dedup[h[i]] = struct{}{}
+			}
+		}
+		xf, _ := xorfilter.Populate(tmp)
+		c.pendings = c.pendings[:0]
+		c.compacts = append(c.compacts, *xf)
+		c.clearDedup()
+	}
+	return true
 }
 
 func (c *Cursor) Contains(key bitmap.Key) bool {
+	c._mu.RLock()
+	defer c._mu.RUnlock()
 	h := hashCode(key)
-	return c.m.Contains(h[0]) && c.m.Contains(h[1])
+	_, ok := c.contains(h, expandHash(h))
+	return ok
+}
+
+func (c *Cursor) contains(h uint64, bfh [compactBFHash]uint64) (int, bool) {
+	if _, ok := c._dedup[h]; ok {
+		return -1, true
+	}
+
+NEXT:
+	for i, cp := range c.compacts {
+		bf := compactBFHash //  at(compactBFHash, i)
+		for i := 0; i < bf; i++ {
+			if !cp.Contains(bfh[i]) {
+				continue NEXT
+			}
+		}
+		return i, true
+	}
+	return -1, false
 }
 
 func (c *Cursor) GoString() string {
-	x := fmt.Sprintf("next: %x-%x, count: %d", c.NextMap, c.NextId, c.m.GetCardinality())
+	x := fmt.Sprintf("next: %x-%x, pendings: %d", c.NextMap, c.NextId, len(c.pendings))
 	return x
-}
-
-func (c *Cursor) shouldLinear() bool {
-	card := c.m.GetCardinality()
-	if card == 0 {
-		return true
-	}
-	return c.m.GetSerializedSizeInBytes()/(card/2) > 8
-}
-
-func (c *Cursor) GetMarshalSize() int {
-	sz := 8 + 8 + 1
-	if c.shouldLinear() {
-		sz += int(c.m.GetCardinality()) * 4
-	} else {
-		sz += int(c.m.GetSerializedSizeInBytes())
-	}
-	return sz
 }
 
 func (c *Cursor) MarshalBinary() []byte {
 	out := &bytes.Buffer{}
 	binary.Write(out, binary.BigEndian, c.NextMap)
 	binary.Write(out, binary.BigEndian, c.NextId)
-	if c.shouldLinear() {
-		out.WriteByte(0)
-		c.m.Iterate(func(x uint32) bool {
-			binary.Write(out, binary.BigEndian, x)
-			return true
-		})
-	} else {
-		out.WriteByte(1)
-		c.m.WriteTo(out)
+	binary.Write(out, binary.BigEndian, uint16(len(c.pendings)))
+	binary.Write(out, binary.BigEndian, c.pendings)
+	binary.Write(out, binary.BigEndian, uint16(len(c.compacts)))
+	for _, cp := range c.compacts {
+		binary.Write(out, binary.BigEndian, cp.Seed)
+		binary.Write(out, binary.BigEndian, cp.Fingerprints)
 	}
 	return out.Bytes()
 }
@@ -119,11 +196,30 @@ func (c *Cursor) String() string {
 	return base64.URLEncoding.EncodeToString(c.MarshalBinary())
 }
 
-func hashCode(k bitmap.Key) [2]uint32 {
-	a := crc32.ChecksumIEEE(k[:])
-	for i := range k {
-		k[i] = ^k[i]
-	}
-	b := crc32.ChecksumIEEE(k[:])
-	return [2]uint32{a, b}
+func hashCode(k bitmap.Key) uint64 {
+	a := *(*[2]uint64)(unsafe.Pointer(&k))
+	return hash2(a[0], a[1])
+}
+
+func hash2(a, b uint64) uint64 {
+	const (
+		offset64 = 14695981039346656037
+		prime64  = 1099511628211
+	)
+	h := uint64(offset64)
+	h ^= a
+	h *= prime64
+	h ^= b
+	h *= prime64
+	return h
+}
+
+func expandHash(h uint64) (a [compactBFHash]uint64) {
+	a[0] = h
+	a[1] = ^h
+	a[2] = bits.Reverse64(h)
+	// for i := range a {
+	// 	a[i] = hash2(h, uint64(i))
+	// }
+	return
 }
