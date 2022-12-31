@@ -217,7 +217,7 @@ func hash2(a, b uint64) uint64 {
 func expandHash(h uint64) (a [compactBFHash]uint64) {
 	a[0] = h
 	a[1] = ^h
-	a[2] = bits.Reverse64(h)
+	a[2] = bits.ReverseBytes64(h)
 	// for i := range a {
 	// 	a[i] = hash2(h, uint64(i))
 	// }

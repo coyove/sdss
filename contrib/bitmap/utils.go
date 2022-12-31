@@ -11,11 +11,12 @@ import (
 	"github.com/coyove/sdss/contrib/clock"
 )
 
-const (
-	JoinAll = iota
-	JoinOne
-	JoinMajor
-)
+type Values struct {
+	Oneof       []uint64
+	Major       []uint64
+	Exact       []uint64
+	HighEntropy []uint64
+}
 
 type meterWriter struct {
 	io.Writer
@@ -39,6 +40,16 @@ func h16(v uint32, ts int64) (out [4]uint32) {
 	out[2] = combinehash(v, out[1]) & mask
 	out[3] = combinehash(v, out[2]) & mask
 	return
+}
+
+func icmp(a, b int64) int {
+	if a > b {
+		return 1
+	}
+	if a < b {
+		return -1
+	}
+	return 0
 }
 
 func h32(index uint32, hash uint32) (out uint32) {
@@ -175,7 +186,8 @@ func (b bitmap1024) String() string {
 	return buf.String()
 }
 
-func majorScore(s int) int {
+func (vs *Values) majorScore() int {
+	s := len(vs.Major)
 	if s <= 2 {
 		return s
 	}
@@ -185,39 +197,30 @@ func majorScore(s int) int {
 	return s * 4 / 5
 }
 
-func dedupUint64(qs, musts, heMusts []uint64) ([]uint64, []uint64, []uint64) {
-	f1 := func(a []uint64) []uint64 {
-		if len(a) <= 1 {
-			return a
+func (v *Values) clean() {
+	m := map[uint64]byte{}
+
+	add := func(a []uint64, typ byte) {
+		for _, v := range a {
+			m[v] = typ
 		}
-		if len(a) == 2 {
-			if a[0] != a[1] {
-				return a
-			}
-			return a[:1]
-		}
-		m := make(map[uint64]struct{}, len(a))
+	}
+	remove := func(a []uint64, typ byte) []uint64 {
 		for i := len(a) - 1; i >= 0; i-- {
-			if _, ok := m[a[i]]; ok {
+			if m[a[i]] != typ {
 				a = append(a[:i], a[i+1:]...)
 			}
-			m[a[i]] = struct{}{}
 		}
 		return a
 	}
 
-	qs, musts, heMusts = f1(qs), f1(musts), f1(heMusts)
-	if len(qs) == 0 || len(musts) == 0 {
-		return qs, musts, heMusts
-	}
+	add(v.Oneof, 'o')
+	add(v.Major, 'm')
+	add(v.Exact, 'e')
+	add(v.HighEntropy, 'h')
 
-	for i := len(qs) - 1; i >= 0; i-- {
-		for _, v := range musts {
-			if v == qs[i] {
-				qs = append(qs[:i], qs[i+1:]...)
-				break
-			}
-		}
-	}
-	return qs, musts, heMusts
+	v.Oneof = remove(v.Oneof, 'o')
+	v.Major = remove(v.Major, 'm')
+	v.Exact = remove(v.Exact, 'e')
+	v.HighEntropy = remove(v.HighEntropy, 'h')
 }

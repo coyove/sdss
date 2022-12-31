@@ -164,7 +164,7 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(b.MarshalBinary(true)), b)
 	// b.Save("cache")
 
-	gs := ngram.Split("chinese")
+	gs := ngram.Split("chinese noodle")
 	if false {
 		gs = ngram.Split(`kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
  together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350\u00b0 for 1 hour.""]",www.
@@ -195,7 +195,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 			defer wg.Done()
 			// results = b.Join(q, nil, 1670192109, 50, JoinMajor)
 			var tmp []KeyIdScore
-			fmt.Println(b.Join(nil, nil, []uint64{600}, b.End(), JoinMajor, func(kis KeyIdScore) bool {
+			fmt.Println(b.Join(Values{Major: q, Oneof: []uint64{types.StrHash("cream")}}, b.Start(), false, func(kis KeyIdScore) bool {
 				tmp = append(tmp, kis)
 				return len(tmp) < 50
 			}))
@@ -203,7 +203,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 		}()
 	}
 	wg.Wait()
-	fmt.Println(len(results), time.Since(start))
+	fmt.Println((results), time.Since(start))
 	hits := 0
 
 	sort.Slice(results, func(i, j int) bool { return results[i].Key.Less(results[j].Key) })
@@ -220,7 +220,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 			}
 		}
 		if s >= len(gs)/2 {
-			fmt.Println(results[i].Key.LowUint64(), results[i].Id, s) // , line)
+			fmt.Println(results[i].Key.LowUint64(), results[i].Id, s) // line)
 			_ = i
 			hits++
 		}
