@@ -12,10 +12,9 @@ import (
 )
 
 type Values struct {
-	Oneof       []uint64
-	Major       []uint64
-	Exact       []uint64
-	HighEntropy []uint64
+	Oneof []uint64
+	Major []uint64
+	Exact []uint64
 }
 
 type meterWriter struct {
@@ -217,10 +216,8 @@ func (v *Values) clean() {
 	add(v.Oneof, 'o')
 	add(v.Major, 'm')
 	add(v.Exact, 'e')
-	add(v.HighEntropy, 'h')
 
 	v.Oneof = remove(v.Oneof, 'o')
 	v.Major = remove(v.Major, 'm')
 	v.Exact = remove(v.Exact, 'e')
-	v.HighEntropy = remove(v.HighEntropy, 'h')
 }

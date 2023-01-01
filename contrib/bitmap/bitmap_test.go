@@ -59,23 +59,29 @@ func TestBitmap2(t *testing.T) {
 		m := roaring.New()
 		m2 := roaring.New()
 		ref := map[uint32][]uint32{}
-		for i := 0; i < 1e6; i++ {
+		const N = 1e6
+		const BF = 2
+		for i := 0; i < N; i++ {
+		AGAIN:
 			x := rand.Uint32()
+			if len(ref[x]) > 0 {
+				goto AGAIN
+			}
 			h := h16(x, 0)
-			for j := 0; j < 10; j++ {
-				y := uint32(j)*50 + rand.Uint32()%50
-				m.Add(h[0]&0xfffff000 | (y & 0xfff))
-				m.Add(h[1]&0xfffff000 | (y & 0xfff))
-				m2.Add(h[0]&0xfffffc00 | (y & 0x3ff))
-				m2.Add(h[1]&0xfffffc00 | (y & 0x3ff))
+			for j := 0; j < 32; j++ {
+				y := uint32(j)*128 + rand.Uint32()%128
+				for bf := 0; bf < BF; bf++ {
+					m.Add(h[bf]&0xfffff000 | (y & 0xfff))
+					// m2.Add(h[bf]&0xfffffc00 | (y & 0x3ff))
+				}
 				ref[x] = append(ref[x], y)
 			}
 		}
-		ys0, total, total2 := 0, 0, 0
+		ys0, total, overflows, total2 := 0, 0, map[int]int{}, 0
 		for x, ys := range ref {
 			h := h16(x, 0)
-			tmp := [2]*roaring.Bitmap{roaring.New(), roaring.New()}
-			for i := 0; i < 2; i++ {
+			tmp := []*roaring.Bitmap{roaring.New(), roaring.New(), roaring.New(), roaring.New()}[:BF]
+			for i := 0; i < BF; i++ {
 				z := h[i] & 0xfffff000
 				iter := m.Iterator().(*roaring.IntIterator)
 				iter.Seek(z)
@@ -91,33 +97,57 @@ func TestBitmap2(t *testing.T) {
 					}
 				}
 			}
-			tmp[0].And(tmp[1])
+			for i := 1; i < BF; i++ {
+				tmp[0].And(tmp[i])
+			}
 			ys0 += len(ys)
 			total += int(tmp[0].GetCardinality())
-		}
-		for x := range ref {
-			h := h16(x, 0)
-			tmp := [2]*roaring.Bitmap{roaring.New(), roaring.New()}
-			for i := 0; i < 2; i++ {
-				z := h[i] & 0xfffffc00
-				iter := m2.Iterator().(*roaring.IntIterator)
-				iter.Seek(z)
-				for iter.HasNext() {
-					if v := iter.Next(); v&0xfffffc00 == z {
-						tmp[i].Add(v & 0x3ff)
-					} else {
-						break
-					}
+			for _, y := range ys {
+				if !tmp[0].Contains(y) {
+					fmt.Println(ys)
+					panic(y)
 				}
+				tmp[0].Remove(y)
 			}
-			tmp[0].And(tmp[1])
-			total2 += int(tmp[0].GetCardinality())
+			overflows[int(tmp[0].GetCardinality())]++
 		}
-		fmt.Println(ys0, total, m.GetCardinality(), total2, m2.GetCardinality())
+		// for x := range ref {
+		// 	h := h16(x, 0)
+		// 	tmp := [2]*roaring.Bitmap{roaring.New(), roaring.New()}
+		// 	for i := 0; i < 2; i++ {
+		// 		z := h[i] & 0xfffffc00
+		// 		iter := m2.Iterator().(*roaring.IntIterator)
+		// 		iter.Seek(z)
+		// 		for iter.HasNext() {
+		// 			if v := iter.Next(); v&0xfffffc00 == z {
+		// 				tmp[i].Add(v & 0x3ff)
+		// 			} else {
+		// 				break
+		// 			}
+		// 		}
+		// 	}
+		// 	tmp[0].And(tmp[1])
+		// 	total2 += int(tmp[0].GetCardinality())
+		// }
+		fmt.Println(ys0, total, m.GetCardinality())
+		fmt.Println(ys0, total2, m2.GetCardinality())
+
+		a := make([]int, 10000)
+		for k, n := range overflows {
+			a[k] = n
+		}
+		tot := 0
+		for i, a := range a {
+			tot += a
+			if tot >= int(N*0.99) {
+				fmt.Println("p99 at", i)
+				break
+			}
+		}
 		return
 	}
 
-	b := New(now, 2)
+	b := New(now)
 	cached, err := ioutil.ReadFile("cache")
 	if len(cached) > 0 {
 		b, err = Unmarshal(bytes.NewReader(cached))
@@ -153,7 +183,8 @@ func TestBitmap2(t *testing.T) {
 		for k := range ngram.Split(string(line)) {
 			hs = append(hs, types.StrHash(k))
 		}
-		ba.AddAsync(Uint64Key(uint64(i)), hs, []uint64{uint64(i)})
+		hs = append(hs, uint64(i))
+		ba.AddAsync(Uint64Key(uint64(i)), hs)
 
 		if i%1000 == 0 {
 			log.Println(i)
@@ -164,7 +195,7 @@ func TestBitmap2(t *testing.T) {
 	fmt.Println(len(b.MarshalBinary(true)), b)
 	// b.Save("cache")
 
-	gs := ngram.Split("chinese noodle")
+	gs := ngram.Split("chinese")
 	if false {
 		gs = ngram.Split(`kernel corn"", ""1/2 pkg. (approximately 20) saltine crackers, crushed"", ""1 egg, beaten"", ""6 tsp. butter, divided"", ""pepper to taste""]","[""Mix
  together both cans of corn, crackers, egg, 2 teaspoons of melted butter and pepper and place in a buttered baking dish."", ""Dot with remaining 4 teaspoons of butter."", ""Bake at 350\u00b0 for 1 hour.""]",www.
@@ -195,7 +226,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 			defer wg.Done()
 			// results = b.Join(q, nil, 1670192109, 50, JoinMajor)
 			var tmp []KeyIdScore
-			fmt.Println(b.Join(Values{Major: q, Oneof: []uint64{types.StrHash("cream")}}, b.Start(), false, func(kis KeyIdScore) bool {
+			fmt.Println(b.Join(Values{Exact: []uint64{600} /* Oneof: []uint64{types.StrHash("cream")} */}, b.Start(), false, func(kis KeyIdScore) bool {
 				tmp = append(tmp, kis)
 				return len(tmp) < 50
 			}))
@@ -230,7 +261,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 
 func TestCollision(t *testing.T) {
 	tot := 0
-	m2 := New(0, 2)
+	m2 := New(0)
 	for i := 0; i < 1e6; i++ {
 		m := roaring.New()
 		var v []uint64

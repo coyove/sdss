@@ -14,12 +14,12 @@ import (
 )
 
 const (
-	slotSize        = 1 << 14
-	slotNum         = 1 << 6
-	fastSlotNum     = 1 << 12
-	fastSlotSize    = 1 << 8
-	fastSlotMask    = 0xfffff000
-	highEntropyMask = 0xffff0000
+	slotSize     = 1 << 14
+	slotNum      = 1 << 6
+	fastSlotNum  = 1 << 12
+	fastSlotSize = 1 << 8
+	fastSlotMask = 0xfffff000
+	bfHash       = 3
 
 	Capcity = slotSize * slotNum
 )
@@ -28,16 +28,14 @@ type Range struct {
 	mu         sync.RWMutex
 	mfmu       sync.Mutex
 	start, end int64
-	hashNum    int8
 	fastTable  *roaring.Bitmap
 	slots      [slotNum]*subMap
 }
 
-func New(start int64, hashNum int8) *Range {
+func New(start int64) *Range {
 	d := &Range{
 		start:     start,
 		end:       -1,
-		hashNum:   hashNum,
 		fastTable: roaring.New(),
 	}
 	for i := range d.slots {
@@ -90,11 +88,7 @@ type subMap struct {
 }
 
 func (b *Range) Add(key Key, values []uint64) bool {
-	return b.AddHighEntropy(key, values, nil)
-}
-
-func (b *Range) AddHighEntropy(key Key, values, heValues []uint64) bool {
-	if len(values)+len(heValues) == 0 {
+	if len(values) == 0 {
 		panic("empty values")
 	}
 	b.mu.Lock()
@@ -108,20 +102,10 @@ func (b *Range) AddHighEntropy(key Key, values, heValues []uint64) bool {
 	offset := uint32(b.end / fastSlotSize)
 	for _, v := range values {
 		h := h16(uint32(v), b.start)
-		for i := 0; i < int(b.hashNum); i++ {
+		for i := 0; i < bfHash; i++ {
 			b.fastTable.Add(h[i]&fastSlotMask | offset)
 		}
 	}
-
-	for _, v := range heValues {
-		// For high entropy values, we only store their high 16 bits into fastTable.
-		h := h16(uint32(v), b.start)
-		for i := 0; i < int(b.hashNum); i++ {
-			b.fastTable.Add(h[i]&highEntropyMask | offset)
-		}
-	}
-
-	values = append(values, heValues...)
 
 	m := b.slots[b.end/slotSize]
 	m.mu.Lock()
@@ -156,7 +140,6 @@ func (b *Range) Join(vs Values, start int64, desc bool, f func(KeyIdScore) bool)
 	}
 
 	startSlot := int(start / slotSize)
-	vs.Exact = append(vs.Exact, vs.HighEntropy...)
 
 	endSlot, endCmp, step := -1, 1, -1
 	if !desc {
@@ -262,7 +245,6 @@ func (b *Range) Clone() *Range {
 	b2 := &Range{}
 	b2.start = b.start
 	b2.end = b.end
-	b2.hashNum = b.hashNum
 	b2.fastTable = b.fastTable.Clone()
 	for i := range b2.slots {
 		b2.slots[i] = b.slots[i].clone()
@@ -302,7 +284,8 @@ func Unmarshal(rd io.Reader) (*Range, error) {
 		return nil, fmt.Errorf("read end: %v", err)
 	}
 
-	if err := binary.Read(rd, binary.BigEndian, &b.hashNum); err != nil {
+	var z byte = bfHash
+	if err := binary.Read(rd, binary.BigEndian, &z); err != nil {
 		return nil, fmt.Errorf("read hashNum: %v", err)
 	}
 
@@ -397,7 +380,7 @@ func (b *Range) Marshal(w io.Writer, compress bool) (int, error) {
 	if err := binary.Write(w, binary.BigEndian, b.end); err != nil {
 		return 0, err
 	}
-	if err := binary.Write(w, binary.BigEndian, b.hashNum); err != nil {
+	if err := binary.Write(w, binary.BigEndian, byte(bfHash)); err != nil {
 		return 0, err
 	}
 	if err := binary.Write(w, binary.BigEndian, b.fastTable.GetSerializedSizeInBytes()); err != nil {
@@ -466,7 +449,7 @@ func (b *Range) String() string {
 
 	fmt.Fprintf(buf, "range: %d-%d, count: %d, rough size: %db\n", b.start, b.End(), b.Len(), b.RoughSizeBytes())
 	fmt.Fprintf(buf, "fast table: num=%d, size=%db, #hash=%d, bf=%d\n",
-		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes(), m.GetCardinality(), b.hashNum)
+		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes(), m.GetCardinality(), bfHash)
 	for i, h := range b.slots {
 		h.debug(i, buf)
 	}
@@ -495,20 +478,20 @@ func (b *Range) joinFast(vs *Values) (res bitmap1024) {
 	}
 
 	hashStates := map[uint32]*hashState{}
-	fill := func(hashes []uint64, mask uint32) [][4]uint32 {
+	fill := func(hashes []uint64) [][4]uint32 {
 		var out [][4]uint32
 		for _, v := range hashes {
 			h := h16(uint32(v), b.start)
-			for i := 0; i < int(b.hashNum); i++ {
-				hashStates[h[i]] = &hashState{h: h[i] & mask}
+			for i := 0; i < bfHash; i++ {
+				hashStates[h[i]] = &hashState{h: h[i] & fastSlotMask}
 			}
 			out = append(out, h)
 		}
 		return out
 	}
-	oneofHashes := fill(vs.Oneof, fastSlotMask)
-	majorHashes := fill(vs.Major, fastSlotMask)
-	exactHashes := append(fill(vs.Exact, fastSlotMask), fill(vs.HighEntropy, highEntropyMask)...)
+	oneofHashes := fill(vs.Oneof)
+	majorHashes := fill(vs.Major)
+	exactHashes := fill(vs.Exact)
 
 	iter := b.fastTable.Iterator().(*roaring.IntIterator)
 	for _, hs := range hashStates {
@@ -527,7 +510,7 @@ func (b *Range) joinFast(vs *Values) (res bitmap1024) {
 	var final *bitmap1024
 	for _, raw := range oneofHashes {
 		m := hashStates[raw[0]].bitmap1024
-		for i := 1; i < int(b.hashNum); i++ {
+		for i := 1; i < bfHash; i++ {
 			m.and(&hashStates[raw[i]].bitmap1024)
 		}
 		if final == nil {
@@ -541,7 +524,7 @@ func (b *Range) joinFast(vs *Values) (res bitmap1024) {
 	var scores map[uint16]int
 	for _, raw := range majorHashes {
 		m := hashStates[raw[0]].bitmap1024
-		for i := 1; i < int(b.hashNum); i++ {
+		for i := 1; i < bfHash; i++ {
 			m.and(&hashStates[raw[i]].bitmap1024)
 		}
 		if major == nil {
@@ -570,7 +553,7 @@ func (b *Range) joinFast(vs *Values) (res bitmap1024) {
 
 	for _, raw := range exactHashes {
 		m := hashStates[raw[0]].bitmap1024
-		for i := 1; i < int(b.hashNum); i++ {
+		for i := 1; i < bfHash; i++ {
 			m.and(&hashStates[raw[i]].bitmap1024)
 		}
 		if final == nil {
