@@ -1,0 +1,171 @@
+package bitmap
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/coyove/common/lru"
+	"github.com/coyove/sdss/contrib/clock"
+	"golang.org/x/sync/singleflight"
+)
+
+type Manager struct {
+	mu          sync.Mutex
+	dirname     string
+	switchLimit int64
+	dirFiles    []string
+	current     *SaveAggregator
+	currentRO   *Range
+	loader      singleflight.Group
+	cache       *lru.Cache
+
+	Event struct {
+		OnLoaded func(string, time.Duration)
+		OnSaved  func(string, int, error, time.Duration)
+	}
+}
+
+func (m *Manager) getPath(base int64) string {
+	return filepath.Join(m.dirname, fmt.Sprintf("%016x", base))
+}
+
+func (m *Manager) saveAggImpl(b *Range) error {
+	start := time.Now()
+	m.currentRO = b.Clone()
+	fn := m.getPath(b.Start())
+	x, err := b.Save(fn, b.Len() >= m.switchLimit)
+	if m.Event.OnSaved != nil {
+		m.Event.OnSaved(fn, x, err, time.Since(start))
+	}
+	return err
+}
+
+func (m *Manager) load(offset int64) (*Range, error) {
+	if offset == m.currentRO.Start() {
+		return m.currentRO, nil
+	}
+	fn := m.getPath(offset)
+	cached, ok := m.cache.Get(fn)
+	if ok {
+		return cached.(*Range), nil
+	}
+	out, err, _ := m.loader.Do(fn, func() (interface{}, error) {
+		start := time.Now()
+		v, err := Load(fn)
+		if v == nil && err == nil {
+			return nil, nil
+		}
+		if m.Event.OnLoaded != nil {
+			m.Event.OnLoaded(fn, time.Since(start))
+		}
+		return v, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, nil
+	}
+	m.cache.AddWeight(fn, out, out.(*Range).RoughSizeBytes())
+	return out.(*Range), nil
+}
+
+func (m *Manager) findPrev(mark int64) (int64, bool) {
+	marks := fmt.Sprintf("%016x", mark)
+	idx := sort.SearchStrings(m.dirFiles, marks)
+	if idx >= len(m.dirFiles) {
+		idx = len(m.dirFiles)
+	}
+	if idx == 0 {
+		return 0, true
+	}
+	prev, _ := strconv.ParseInt(m.dirFiles[idx-1], 16, 64)
+	return prev, false
+}
+
+func (m *Manager) reloadFiles() error {
+	df, err := os.Open(m.dirname)
+	if err != nil {
+		return err
+	}
+	defer df.Close()
+	names, err := df.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if _, err := strconv.ParseInt(n, 16, 64); err != nil {
+			return fmt.Errorf("invalid filename %q: %v", n, err)
+		}
+	}
+	m.dirFiles = names
+	return nil
+}
+
+func NewManager(dir string, switchLimit, cacheSize int64) (*Manager, error) {
+	if err := os.MkdirAll(dir, 0777); err != nil {
+		return nil, err
+	}
+	m := &Manager{
+		dirname:     dir,
+		cache:       lru.NewCache(cacheSize),
+		switchLimit: switchLimit,
+	}
+	if err := m.reloadFiles(); err != nil {
+		return nil, err
+	}
+
+	normBase := clock.UnixMilli()
+	prevBase, isFirst := m.findPrev(normBase + 1)
+	if isFirst {
+		m.current = New(normBase).AggregateSaves(m.saveAggImpl)
+	} else {
+		b, err := Load(m.getPath(prevBase))
+		if err != nil {
+			return nil, err
+		}
+		m.current = b.AggregateSaves(m.saveAggImpl)
+	}
+	m.currentRO = m.current.Range().Clone()
+	return m, nil
+}
+
+func (m *Manager) Saver() *SaveAggregator {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.current.Range().Len() >= m.switchLimit {
+		m.current.Close()
+		m.current = New(clock.UnixMilli()).AggregateSaves(m.saveAggImpl)
+		m.currentRO = m.current.Range().Clone()
+		m.reloadFiles()
+	}
+	return m.current
+}
+
+func (m *Manager) WalkDesc(start int64, f func(*Range) bool) error {
+	for {
+		prev, isFirst := m.findPrev(start + 1)
+		if isFirst {
+			return nil
+		}
+		b, err := m.load(prev)
+		if err != nil {
+			return err
+		}
+		if !f(b) {
+			return nil
+		}
+		start = prev - 1
+	}
+}
+
+func (m *Manager) String() string {
+	return fmt.Sprintf("files: %d, saver: %.1f, cache: %d(%db)",
+		len(m.dirFiles), m.current.Metrics(), m.cache.Len(), m.cache.Weight())
+}

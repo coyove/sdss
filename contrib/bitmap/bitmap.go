@@ -45,10 +45,6 @@ func New(start int64) *Range {
 	return d
 }
 
-func (b *Range) SetStart(v int64) {
-	b.start = v
-}
-
 func (b *Range) Start() int64 {
 	return b.start
 }

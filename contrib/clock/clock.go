@@ -30,10 +30,10 @@ var (
 )
 
 const (
-	serverIdMask = 0xfffffff
-	maxCounter   = 0x3fff
-	tsBits       = 28
-	tsOffset     = 16666666666
+	serverIdMask = 0x3fffffff
+	maxCounter   = 0x7fff
+	tsBits       = 30
+	tsOffset     = 1666666666
 	encodeTable  = "-.0123456789_abcdefghijklmnopqrstuvwxyz~"
 	// (2^64 - 40^12) / 2^64 = 0.1
 	// Count time up to year 2220.
@@ -52,8 +52,8 @@ func UnixNano() int64 {
 	return runtimeNano() - startupNano + startupWallNano
 }
 
-func UnixDeci() int64 {
-	return UnixNano() / 1e8
+func UnixMilli() int64 {
+	return UnixNano() / 1e6
 }
 
 func Unix() int64 {
@@ -68,7 +68,7 @@ func Id() (id uint64) {
 	idMutex.Lock()
 	defer idMutex.Unlock()
 
-	sec := UnixDeci() - tsOffset
+	sec := Unix() - tsOffset
 	if sec < idLastSec {
 		panic("bad clock skew")
 	}
@@ -98,11 +98,11 @@ func Base40Encode(id uint64) string {
 	return *(*string)(unsafe.Pointer(&buf))
 }
 
-func UnixDeciToIdStr(m int64) string {
+func UnixToIdStr(m int64) string {
 	return Base40Encode(uint64(m-tsOffset) << tsBits)
 }
 
-func ParseIdUnixDeci(id uint64) int64 {
+func ParseIdUnix(id uint64) int64 {
 	return int64(id>>tsBits) + tsOffset
 }
 
@@ -124,7 +124,7 @@ func Base40Decode(idstr string) (uint64, bool) {
 
 func ParseIdStrUnix(idstr string) (int64, bool) {
 	id, ok := Base40Decode(idstr)
-	return ParseIdUnixDeci(id) / 10, ok
+	return ParseIdUnix(id), ok
 }
 
 func Rand() float64 {

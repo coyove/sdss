@@ -65,8 +65,8 @@ func getDoc(id []string) (docs []*types.Document, err error) {
 }
 
 func scanDoc(unix int64) (docs []*types.Document, err error) {
-	lower := clock.UnixDeciToIdStr(unix)
-	upper := clock.UnixDeciToIdStr(unix + 1)
+	lower := clock.UnixToIdStr(unix)
+	upper := clock.UnixToIdStr(unix + 1)
 	for id, doc := range cm.m {
 		if id >= lower && id < upper {
 			docs = append(docs, doc)
