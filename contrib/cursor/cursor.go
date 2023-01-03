@@ -2,13 +2,12 @@ package cursor
 
 import (
 	"bytes"
-	"encoding/base64"
+	"encoding/ascii85"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
 	"math/bits"
-	"strings"
 	"sync"
 	"unsafe"
 
@@ -39,8 +38,11 @@ func at(a []int, idx int) int {
 }
 
 type Cursor struct {
-	NextMap  int64
-	NextId   int64
+	PrevMap int64
+	PrevId  int64
+	NextMap int64
+	NextId  int64
+
 	pendings []uint64
 	compacts []xorfilter.Xor8
 
@@ -54,12 +56,28 @@ func New() *Cursor {
 	return c
 }
 
-func Parse(v string) (*Cursor, bool) {
-	return Read(base64.NewDecoder(base64.URLEncoding, strings.NewReader(v)))
+func Parse(buf []byte) (*Cursor, bool) {
+	for i, b := range buf {
+		switch b {
+		case '~':
+			buf[i] = '\\'
+		case '{':
+			buf[i] = '"'
+		case '}':
+			buf[i] = '\''
+		}
+	}
+	return Read(ascii85.NewDecoder(bytes.NewReader(buf)))
 }
 
 func Read(rd io.Reader) (*Cursor, bool) {
 	c := &Cursor{}
+	if err := binary.Read(rd, binary.BigEndian, &c.PrevMap); err != nil {
+		return nil, false
+	}
+	if err := binary.Read(rd, binary.BigEndian, &c.PrevId); err != nil {
+		return nil, false
+	}
 	if err := binary.Read(rd, binary.BigEndian, &c.NextMap); err != nil {
 		return nil, false
 	}
@@ -179,6 +197,8 @@ func (c *Cursor) GoString() string {
 
 func (c *Cursor) MarshalBinary() []byte {
 	out := &bytes.Buffer{}
+	binary.Write(out, binary.BigEndian, c.PrevMap)
+	binary.Write(out, binary.BigEndian, c.PrevId)
 	binary.Write(out, binary.BigEndian, c.NextMap)
 	binary.Write(out, binary.BigEndian, c.NextId)
 	binary.Write(out, binary.BigEndian, uint16(len(c.pendings)))
@@ -191,9 +211,22 @@ func (c *Cursor) MarshalBinary() []byte {
 	return out.Bytes()
 }
 
-// old := buf.String()
 func (c *Cursor) String() string {
-	return base64.URLEncoding.EncodeToString(c.MarshalBinary())
+	buf := &bytes.Buffer{}
+	w := ascii85.NewEncoder(buf)
+	w.Write(c.MarshalBinary())
+	w.Close()
+	for i, b := range buf.Bytes() {
+		switch b {
+		case '\\':
+			buf.Bytes()[i] = '~'
+		case '"':
+			buf.Bytes()[i] = '{'
+		case '\'':
+			buf.Bytes()[i] = '}'
+		}
+	}
+	return buf.String()
 }
 
 func hashCode(k bitmap.Key) uint64 {
@@ -218,8 +251,5 @@ func expandHash(h uint64) (a [compactBFHash]uint64) {
 	a[0] = h
 	a[1] = ^h
 	a[2] = bits.ReverseBytes64(h)
-	// for i := range a {
-	// 	a[i] = hash2(h, uint64(i))
-	// }
 	return
 }

@@ -1,7 +1,6 @@
 package cursor
 
 import (
-	"bytes"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -53,11 +52,16 @@ func TestCursor(t *testing.T) {
 		xf, _ := xorfilter.Populate(data)
 		fmt.Println(n, len(buf), len(xf.Fingerprints)*2)
 
-		c, _ = Read(bytes.NewReader(buf))
+		c, _ = Parse([]byte(c.String()))
+		// c, _ = Read(bytes.NewReader(c.MarshalBinary()))
 		for _, v := range data {
 			if !c.Contains(bitmap.Uint64Key(uint64(v))) {
 				panic(v)
 			}
+		}
+
+		if n < 100 {
+			fmt.Println(c)
 		}
 	}
 }

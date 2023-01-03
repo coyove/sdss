@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -444,12 +445,12 @@ func (b *Range) String() string {
 	m := roaring.New()
 	b.fastTable.Iterate(func(x uint32) bool {
 		m.Add(x & fastSlotMask)
-		return true
+		return x < math.MaxUint32/32
 	})
 
-	fmt.Fprintf(buf, "range: %d-%d, count: %d, rough size: %db\n", b.start, b.End(), b.Len(), b.RoughSizeBytes())
-	fmt.Fprintf(buf, "fast table: num=%d, size=%db, #hash=%d, bf=%d\n",
-		b.fastTable.GetCardinality(), b.fastTable.GetSerializedSizeInBytes(), m.GetCardinality(), bfHash)
+	fmt.Fprintf(buf, "range: %d-%d, len: %d, rough size: %db\n", b.Start(), b.End(), b.Len(), b.RoughSizeBytes())
+	fmt.Fprintf(buf, "fast table len: %d, approx hash num: %d, size: %db\n",
+		b.fastTable.GetCardinality(), m.GetCardinality()*32, b.fastTable.GetSerializedSizeInBytes())
 	for i, h := range b.slots {
 		h.debug(i, buf)
 	}

@@ -54,13 +54,13 @@ func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
 
-	if false {
+	if true {
 		rand.Seed(clock.Unix())
 		m := roaring.New()
 		m2 := roaring.New()
 		ref := map[uint32][]uint32{}
 		const N = 1e6
-		const BF = 2
+		const BF = 3
 		for i := 0; i < N; i++ {
 		AGAIN:
 			x := rand.Uint32()
@@ -68,7 +68,7 @@ func TestBitmap2(t *testing.T) {
 				goto AGAIN
 			}
 			h := h16(x, 0)
-			for j := 0; j < 32; j++ {
+			for j := 0; j < 32; j += rand.Intn(2) + 1 {
 				y := uint32(j)*128 + rand.Uint32()%128
 				for bf := 0; bf < BF; bf++ {
 					m.Add(h[bf]&0xfffff000 | (y & 0xfff))
