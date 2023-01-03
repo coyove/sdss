@@ -25,8 +25,9 @@ type Manager struct {
 	cache       *lru.Cache
 
 	Event struct {
-		OnLoaded func(string, time.Duration)
-		OnSaved  func(string, int, error, time.Duration)
+		OnLoaded  func(string, time.Duration)
+		OnSaved   func(string, int, error, time.Duration)
+		OnMissing func(int64) (*Range, error)
 	}
 }
 
@@ -88,7 +89,13 @@ func (m *Manager) findPrev(mark int64) (int64, bool) {
 	return prev, false
 }
 
-func (m *Manager) reloadFiles() error {
+func (m *Manager) ReloadFiles() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reloadFilesLocked()
+}
+
+func (m *Manager) reloadFilesLocked() error {
 	df, err := os.Open(m.dirname)
 	if err != nil {
 		return err
@@ -117,7 +124,7 @@ func NewManager(dir string, switchLimit, cacheSize int64) (*Manager, error) {
 		cache:       lru.NewCache(cacheSize),
 		switchLimit: switchLimit,
 	}
-	if err := m.reloadFiles(); err != nil {
+	if err := m.reloadFilesLocked(); err != nil {
 		return nil, err
 	}
 
@@ -143,22 +150,30 @@ func (m *Manager) Saver() *SaveAggregator {
 		m.current.Close()
 		m.current = New(clock.UnixMilli()).AggregateSaves(m.saveAggImpl)
 		m.currentRO = m.current.Range().Clone()
-		m.reloadFiles()
+		m.reloadFilesLocked()
 	}
 	return m.current
 }
 
-func (m *Manager) WalkDesc(start int64, f func(*Range) bool) error {
+func (m *Manager) WalkDesc(start int64, f func(*Range) bool) (err error) {
 	for {
+		var b *Range
+
 		prev, isFirst := m.findPrev(start + 1)
 		if isFirst {
+			if m.Event.OnMissing != nil {
+				b, err = m.Event.OnMissing(start + 1)
+				goto LOADED
+			}
 			return nil
 		}
-		b, err := m.load(prev)
+		b, err = m.load(prev)
+
+	LOADED:
 		if err != nil {
 			return err
 		}
-		if !f(b) {
+		if b != nil && !f(b) {
 			return nil
 		}
 		start = prev - 1

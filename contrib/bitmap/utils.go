@@ -84,7 +84,10 @@ type KeyIdScore struct {
 }
 
 type JoinMetrics struct {
+	BaseStart   int64
 	Start       int64
+	Desc        bool
+	Values      Values
 	FastElapsed time.Duration
 	Elapsed     time.Duration
 	Slots       [slotNum]struct {
@@ -94,12 +97,30 @@ type JoinMetrics struct {
 }
 
 func (jm JoinMetrics) String() string {
-	x := fmt.Sprintf("%d: %vus = %v(fast)", jm.Start, jm.Elapsed.Microseconds(), jm.FastElapsed.Microseconds())
+	dir := "asc"
+	if jm.Desc {
+		dir = "desc"
+	}
+	x := fmt.Sprintf("join map [%d] start at %d (%s) in %vus",
+		jm.BaseStart, jm.Start, dir, jm.Elapsed.Microseconds())
+	x += fmt.Sprintf("\n\tinput: oneof=%d, major=%d (min=%d), exact=%d",
+		len(jm.Values.Oneof), len(jm.Values.Major), jm.Values.majorScore(), len(jm.Values.Exact))
+	x += fmt.Sprintf("\n\tfast lookup: %vus", jm.FastElapsed.Microseconds())
+
+	c := 0
 	for i := len(jm.Slots) - 1; i >= 0; i-- {
 		s := jm.Slots[i]
 		if s.Scans > 0 {
-			x += fmt.Sprintf(" + %d(#%d: %d/%d)", s.Elapsed.Microseconds(), i, s.Hits, s.Scans)
+			x += fmt.Sprintf("\n\tsubrange [%02d]: %4dus, %d out of %d",
+				i, s.Elapsed.Microseconds(), s.Hits, s.Scans)
+			if s.Hits == 0 {
+				x += " (NO HITS)"
+			}
+			c++
 		}
+	}
+	if c == 0 {
+		x += " (NO HITS)"
 	}
 	return x
 }

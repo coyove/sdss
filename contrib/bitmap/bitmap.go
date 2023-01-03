@@ -125,7 +125,10 @@ func (b *Range) Join(vs Values, start int64, desc bool, f func(KeyIdScore) bool)
 	fastStart := time.Now()
 	fast := b.joinFast(&vs)
 	jm.FastElapsed = time.Since(fastStart)
-	jm.Start = b.start
+	jm.BaseStart = b.start
+	jm.Start = start
+	jm.Values = vs
+	jm.Desc = desc
 
 	if start == -1 {
 		start = b.end
