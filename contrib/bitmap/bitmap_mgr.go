@@ -15,14 +15,14 @@ import (
 )
 
 type Manager struct {
-	mu          sync.Mutex
-	dirname     string
-	switchLimit int64
-	dirFiles    []string
-	current     *SaveAggregator
-	currentRO   *Range
-	loader      singleflight.Group
-	cache       *lru.Cache
+	mu, reloadmu sync.Mutex
+	dirname      string
+	switchLimit  int64
+	dirFiles     []string
+	current      *SaveAggregator
+	currentRO    *Range
+	loader       singleflight.Group
+	cache        *lru.Cache
 
 	Event struct {
 		OnLoaded  func(string, time.Duration)
@@ -108,15 +108,15 @@ func (m *Manager) findPrev(mark int64) (int64, bool) {
 }
 
 func (m *Manager) Last() (int64, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.reloadmu.Lock()
+	defer m.reloadmu.Unlock()
 	v, empty := m.findPrev(clock.UnixMilli() + 1)
 	return v, !empty
 }
 
 func (m *Manager) ReloadFiles() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.reloadmu.Lock()
+	defer m.reloadmu.Unlock()
 	df, err := os.Open(m.dirname)
 	if err != nil {
 		return err
@@ -203,4 +203,17 @@ func (m *Manager) WalkDesc(start int64, f func(*Range) bool) (err error) {
 func (m *Manager) String() string {
 	return fmt.Sprintf("files: %d, saver: %.1f, cache: %d(%db)",
 		len(m.dirFiles), m.current.Metrics(), m.cache.Len(), m.cache.Weight())
+}
+
+func (m *Manager) CollectSimple(dedup interface{ Add(Key) bool }, vs Values, n int) (res []KeyIdScore) {
+	m.WalkDesc(clock.UnixMilli(), func(b *Range) bool {
+		b.Join(vs, -1, true, func(kis KeyIdScore) bool {
+			if dedup.Add(kis.Key) {
+				res = append(res, kis)
+			}
+			return len(res) < n
+		})
+		return len(res) < n
+	})
+	return
 }

@@ -7,7 +7,7 @@ import (
 )
 
 func TestNGram(t *testing.T) {
-
+	fmt.Println(SplitMore("C4H7NO4"))
 	fmt.Println(isCodeString("AB"), isCodeString("Unsaved"), isCodeString(base64.URLEncoding.EncodeToString([]byte("base64"))))
 
 	q := `		女朋友要求戒指 5-7w 预算😋❤️🥺过分么。
@@ -19,11 +19,8 @@ quần quật 18 ếng 1 ngày  là khỏi
 	fmt.Println(Split(q + `Hablamos...? :>
 ✨Gatoteta✨
 amo mi lunar :>`))
-	return
 
 	fmt.Println(trigram(q))
 	fmt.Println("===")
-	for _, v := range Split(`Random selfies #randomppic #lits"match.;newbie" set @abc.def #tag事实🤔的s`) {
-		fmt.Println(v)
-	}
+	fmt.Println(Split(`Random selfies #randomppic #lits"match.;newbie" set @abc.def #tag事实🤔的s`))
 }

@@ -122,7 +122,7 @@ func doSplit(text string, more bool) (res Results) {
 			if isContinue(prevRune) != isContinue(r) {
 				isdiff = true
 			}
-			if (prevRuneNormalized <= utf8.RuneSelf) != (normal(r) <= utf8.RuneSelf) {
+			if (prevRuneNormalized <= utf8.RuneSelf) != (Normalize(r) <= utf8.RuneSelf) {
 				isdiff = true
 			}
 			// fmt.Println(text[prevStart:i], string(prevRuneNormalized), string(prevRune))
@@ -135,7 +135,7 @@ func doSplit(text string, more bool) (res Results) {
 
 		if isContinue(r) {
 			prevRune = r
-			prevRuneNormalized = normal(r)
+			prevRuneNormalized = Normalize(r)
 		} else {
 			if r > 65535 {
 				sp.freq[text[prevStart:i]]++
@@ -174,8 +174,8 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 	if s.lastSplitText != "" {
 		lastr, _ := utf8.DecodeLastRuneInString(s.lastSplitText)
 		if (lastr <= utf8.RuneSelf) != (r <= utf8.RuneSelf) {
-			lastrn := normal(lastr)
-			rn := normal(r)
+			lastrn := Normalize(lastr)
+			rn := Normalize(r)
 			if (lastrn <= utf8.RuneSelf) != (rn <= utf8.RuneSelf) { // test again
 				s.tmpbuf.Reset()
 				s.tmpbuf.WriteRune(unicode.ToLower(lastrn))
@@ -194,8 +194,8 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 	// fmt.Println(lastSplitText, v)
 	s.lastSplitText = v
 
-	if normal(r) < utf8.RuneSelf || unicode.IsLower(r) || unicode.IsUpper(r) {
-		if len(v) == 1 {
+	if Normalize(r) < utf8.RuneSelf || unicode.IsLower(r) || unicode.IsUpper(r) {
+		if len(v) == 1 && !s.more {
 			return
 		}
 

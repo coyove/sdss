@@ -6,3 +6,4 @@ bitmap_cache
 contrib/bitmap/cache
 test
 cpuprofile
+out

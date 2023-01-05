@@ -99,7 +99,7 @@ func removeAccents(s string) string {
 	return output
 }
 
-func normal(r rune) rune {
+func Normalize(r rune) rune {
 	var accent = transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
 	var tmp [32]byte
 	n := utf8.EncodeRune(tmp[:], r)
