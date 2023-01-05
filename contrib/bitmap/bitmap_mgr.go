@@ -40,6 +40,11 @@ func (m *Manager) saveAggImpl(b *Range) error {
 	m.currentRO = b.Clone()
 	fn := m.getPath(b.Start())
 	x, err := b.Save(fn, b.Len() >= m.switchLimit)
+	if err == nil {
+		if bs, ok := m.Latest(); ok && bs != b.Start() {
+			err = m.ReloadFiles()
+		}
+	}
 	if m.Event.OnSaved != nil {
 		m.Event.OnSaved(fn, x, err, time.Since(start))
 	}
@@ -93,6 +98,13 @@ func (m *Manager) ReloadFiles() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.reloadFilesLocked()
+}
+
+func (m *Manager) Latest() (int64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, empty := m.findPrev(clock.UnixMilli() + 1)
+	return v, !empty
 }
 
 func (m *Manager) reloadFilesLocked() error {
@@ -150,7 +162,6 @@ func (m *Manager) Saver() *SaveAggregator {
 		m.current.Close()
 		m.current = New(clock.UnixMilli()).AggregateSaves(m.saveAggImpl)
 		m.currentRO = m.current.Range().Clone()
-		m.reloadFilesLocked()
 	}
 	return m.current
 }
