@@ -16,6 +16,12 @@ func Uint64Key(v uint64) (k Key) {
 	return
 }
 
+func Uint64HighLowKey(hi, lo uint64) (k Key) {
+	binary.BigEndian.PutUint64(k[:8], hi)
+	binary.BigEndian.PutUint64(k[8:], lo)
+	return
+}
+
 func ObjectIdHexKey(v string) (k Key) {
 	if len(v) == 24 {
 		hex.Decode(k[:4], []byte(v))

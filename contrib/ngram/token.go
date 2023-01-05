@@ -14,7 +14,6 @@ type Token struct {
 	Name string  `json:"name"`
 	Raw  string  `json:"raw"`
 	Freq float64 `json:"freq"`
-	// Quoted bool    `json:"quoted"`
 }
 
 func (tok Token) String() string {
@@ -22,27 +21,67 @@ func (tok Token) String() string {
 	if s != tok.Raw {
 		s = "<" + s + "," + tok.Raw + ">"
 	}
-	// if tok.Quoted {
-	// 	return fmt.Sprintf("%q(%.3f)", s, tok.Freq)
-	// }
 	return fmt.Sprintf("%s(%.3f)", s, tok.Freq)
 }
 
-func SplitHash(text string) (res map[string]Token, qs []uint64) {
-	if text == "" {
-		return
+type Results map[string]Token
+
+func (r Results) String() string {
+	var lines [][2]string
+	var max1 int
+	for k, v := range r {
+		y := ""
+		for _, r := range k {
+			if r < 128 {
+				y += fmt.Sprintf("%c ", r)
+			} else if r < 65536 {
+				y += fmt.Sprintf("\\u%04X ", r)
+			} else {
+				y += fmt.Sprintf("\\U%08X ", r)
+			}
+		}
+		z := v.String()
+		lines = append(lines, [2]string{y, z})
+		if len(y) > max1 {
+			max1 = len(y)
+		}
 	}
-	res = Split(text)
-	for k := range res {
+	if max1 > 50 {
+		max1 = 50
+	}
+
+	buf := &bytes.Buffer{}
+	for _, line := range lines {
+		buf.WriteString(line[0])
+		for i := 0; i < max1-len(line[0]); i++ {
+			buf.WriteByte(' ')
+		}
+		buf.WriteString(line[1])
+		buf.WriteString("\n")
+	}
+	return buf.String()
+}
+
+func (r Results) Hashes() (qs []uint64) {
+	for k := range r {
 		qs = append(qs, types.StrHash(k))
 	}
 	return
 }
 
-func Split(text string) (res map[string]Token) {
+func Split(text string) (res Results) {
+	return doSplit(text, false)
+}
+
+func SplitMore(text string) (res Results) {
+	return doSplit(text, true)
+}
+
+func doSplit(text string, more bool) (res Results) {
 	// text = removeAccents(text)
 	res = map[string]Token{}
 	sp := splitter{
+		more: more,
 		freq: map[string]float64{},
 	}
 
@@ -76,16 +115,6 @@ func Split(text string) (res map[string]Token) {
 				continue
 			}
 		}
-
-		// if inQuote {
-		// 	if r == '"' {
-		// 		sp.do(text[prevStart:i], res, true)
-		// 		prevStart = i + sz
-		// 		inQuote = false
-		// 	}
-		// 	i += sz
-		// 	continue
-		// }
 
 		// fmt.Println(string(lastr), string(r), isdiff(lastr, r))
 		if prevRune != utf8.RuneError {
@@ -124,11 +153,6 @@ BREAK:
 		tok := res[k]
 		tok.Freq = v / float64(sp.total)
 		res[k] = tok
-		// if tok.Quoted {
-		// 	for k0, v0 := range Split(res[k].Name) {
-		// 		res[k0] = v0
-		// 	}
-		// }
 	}
 	return
 }
@@ -136,6 +160,7 @@ BREAK:
 type splitter struct {
 	tmpbuf        bytes.Buffer
 	total         int
+	more          bool
 	lastSplitText string
 	freq          map[string]float64
 }
@@ -175,16 +200,23 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 		}
 
 		x := lemma(v)
-		if isCodeString(x) {
-			for _, x := range trigram(x) {
-				s.freq[x]++
-				res[x] = Token{Name: x, Raw: x}
+		if s.more {
+			for _, g := range trigram(x) {
+				s.freq[g]++
+				s.total++
 			}
 		} else {
-			s.freq[x]++
-			res[x] = Token{Name: x, Raw: v} //, Quoted: inQuote}
+			if isCodeString(x) {
+				for _, x := range trigram(x) {
+					s.freq[x]++
+					res[x] = Token{Name: x, Raw: x}
+				}
+			} else {
+				s.freq[x]++
+				res[x] = Token{Name: x, Raw: v} //, Quoted: inQuote}
+			}
+			s.total++
 		}
-		s.total++
 		return
 	}
 
@@ -194,18 +226,29 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 		r, sz := utf8.DecodeRuneInString(v)
 		v = v[sz:]
 
-		if lastr != utf8.RuneError {
+		if s.more {
 			s.tmpbuf.Reset()
-			s.tmpbuf.WriteRune(cv(lastr))
 			s.tmpbuf.WriteRune(cv(r))
 			n := s.tmpbuf.Len()
-			s.tmpbuf.WriteRune(lastr)
 			s.tmpbuf.WriteRune(r)
 			x := s.tmpbuf.String()
 
 			s.freq[x[:n]]++
-			res[x[:n]] = Token{Name: x[:n], Raw: x[n:]} //, Quoted: inQuote}
-			s.total++
+			res[x[:n]] = Token{Name: x[:n], Raw: x[n:]}
+		} else {
+			if lastr != utf8.RuneError {
+				s.tmpbuf.Reset()
+				s.tmpbuf.WriteRune(cv(lastr))
+				s.tmpbuf.WriteRune(cv(r))
+				n := s.tmpbuf.Len()
+				s.tmpbuf.WriteRune(lastr)
+				s.tmpbuf.WriteRune(r)
+				x := s.tmpbuf.String()
+
+				s.freq[x[:n]]++
+				res[x[:n]] = Token{Name: x[:n], Raw: x[n:]} //, Quoted: inQuote}
+				s.total++
+			}
 		}
 
 		lastr = r

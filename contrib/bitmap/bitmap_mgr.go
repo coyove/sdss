@@ -41,7 +41,7 @@ func (m *Manager) saveAggImpl(b *Range) error {
 	fn := m.getPath(b.Start())
 	x, err := b.Save(fn, b.Len() >= m.switchLimit)
 	if err == nil {
-		if bs, ok := m.Latest(); ok && bs != b.Start() {
+		if bs, ok := m.Last(); ok && bs != b.Start() {
 			err = m.ReloadFiles()
 		}
 	}
@@ -81,6 +81,19 @@ func (m *Manager) load(offset int64) (*Range, error) {
 	return out.(*Range), nil
 }
 
+func (m *Manager) findNext(mark int64) (int64, bool) {
+	marks := fmt.Sprintf("%016x", mark)
+	idx := sort.SearchStrings(m.dirFiles, marks)
+	if idx >= len(m.dirFiles) {
+		return 0, true
+	}
+	if m.dirFiles[idx] == marks {
+		idx++
+	}
+	prev, _ := strconv.ParseInt(m.dirFiles[idx], 16, 64)
+	return prev, false
+}
+
 func (m *Manager) findPrev(mark int64) (int64, bool) {
 	marks := fmt.Sprintf("%016x", mark)
 	idx := sort.SearchStrings(m.dirFiles, marks)
@@ -94,20 +107,16 @@ func (m *Manager) findPrev(mark int64) (int64, bool) {
 	return prev, false
 }
 
-func (m *Manager) ReloadFiles() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.reloadFilesLocked()
-}
-
-func (m *Manager) Latest() (int64, bool) {
+func (m *Manager) Last() (int64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	v, empty := m.findPrev(clock.UnixMilli() + 1)
 	return v, !empty
 }
 
-func (m *Manager) reloadFilesLocked() error {
+func (m *Manager) ReloadFiles() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	df, err := os.Open(m.dirname)
 	if err != nil {
 		return err
@@ -136,13 +145,13 @@ func NewManager(dir string, switchLimit, cacheSize int64) (*Manager, error) {
 		cache:       lru.NewCache(cacheSize),
 		switchLimit: switchLimit,
 	}
-	if err := m.reloadFilesLocked(); err != nil {
+	if err := m.ReloadFiles(); err != nil {
 		return nil, err
 	}
 
 	normBase := clock.UnixMilli()
-	prevBase, isFirst := m.findPrev(normBase + 1)
-	if isFirst {
+	prevBase, isEmpty := m.findPrev(normBase + 1)
+	if isEmpty {
 		m.current = New(normBase).AggregateSaves(m.saveAggImpl)
 	} else {
 		b, err := Load(m.getPath(prevBase))
