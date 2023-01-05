@@ -11,6 +11,7 @@ require (
 	github.com/frankban/quicktest v1.14.4 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible
 	github.com/sirupsen/logrus v1.8.1
+	go.etcd.io/bbolt v1.3.6
 	golang.org/x/sync v0.1.0
 	golang.org/x/text v0.4.0
 	gopkg.in/yaml.v3 v3.0.0-20200605160147-a5ece683394c // indirect

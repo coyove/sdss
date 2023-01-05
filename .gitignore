@@ -7,3 +7,5 @@ contrib/bitmap/cache
 test
 cpuprofile
 out
+out.gz
+tags.db

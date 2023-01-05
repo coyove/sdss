@@ -7,6 +7,25 @@ import (
 	"github.com/coyove/sdss/contrib/clock"
 )
 
+type Tag struct {
+	Id         uint64 `json:"I"`
+	Name       string `json:"O"`
+	Display    string `json:"D"`
+	CreateUser string `json:"U"`
+	CreateUnix int64  `json:"C"`
+}
+
+func (t *Tag) MarshalBinary() []byte {
+	buf, _ := json.Marshal(t)
+	return buf
+}
+
+func UnmarshalTagBinary(p []byte) *Tag {
+	t := &Tag{}
+	json.Unmarshal(p, t)
+	return t
+}
+
 type Document struct {
 	Id      string `json:"I"`
 	Content string `json:"C"`

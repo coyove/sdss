@@ -3,17 +3,22 @@ package main
 import (
 	"bufio"
 	"compress/bzip2"
+	"compress/gzip"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/coyove/sdss/contrib/bitmap"
 	"github.com/coyove/sdss/contrib/cursor"
 	"github.com/coyove/sdss/contrib/ngram"
 	"github.com/coyove/sdss/types"
+	"go.etcd.io/bbolt"
 )
 
 func downloadWiki(p string) ([]string, error) {
@@ -92,39 +97,79 @@ func main() {
 		return
 	}
 
-	f, _ := os.Open("out")
-	rd := bufio.NewReader(f)
-	data := map[int]string{}
 	mgr, _ := bitmap.NewManager("bitmap_cache/tags", 1024000, 1*1024*1024*1024)
-	for i := 0; ; i++ {
-		line, err := rd.ReadString('\n')
-		if err != nil {
-			break
-		}
-		line = strings.TrimSpace(line)
-		data[i] = line
-		//m := ngram.SplitMore(line)
-		//for k, v := range ngram.Split(line) {
-		//	m[k] = v
-		//}
-		//h := m.Hashes()
-		//if len(h) == 0 {
-		//	continue
-		//}
-		//mgr.Saver().AddAsync(bitmap.Uint64Key(uint64(i)), h)
-		if i%100000 == 0 {
-			fmt.Println(i)
-		}
-	}
-	mgr.Saver().Close()
+	db, _ := bbolt.Open("tags.db", 0777, &bbolt.Options{FreelistType: bbolt.FreelistMapType})
 
-	q := "covid"
+	data := map[int]string{}
+	if false {
+		f, _ := os.Open("out.gz")
+		gr, _ := gzip.NewReader(f)
+		rd := bufio.NewReader(gr)
+		for i := 0; ; i++ {
+			line, err := rd.ReadString('\n')
+			if err != nil {
+				break
+			}
+			line = strings.TrimSpace(line)
+			data[i] = line
+			m := ngram.SplitMore(line)
+			for k, v := range ngram.Split(line) {
+				m[k] = v
+			}
+			h := m.Hashes()
+			if len(h) == 0 {
+				continue
+			}
+			k := bitmap.Uint64Key(uint64(i))
+			mgr.Saver().AddAsync(k, h)
+			if i%100000 == 0 {
+				log.Println(i)
+			}
+		}
+		mgr.Saver().Close()
+	}
+
+	// for len(data) > 0 {
+	// 	db.Update(func(tx *bbolt.Tx) error {
+	// 		bk, _ := tx.CreateBucketIfNotExists([]byte("tags"))
+	// 		c := 0
+	// 		for i, line := range data {
+	// 			k := bitmap.Uint64Key(uint64(i))
+	// 			bk.Put(k[:], (&types.Tag{
+	// 				Id:         uint64(i),
+	// 				Name:       line,
+	// 				CreateUser: "root",
+	// 				CreateUnix: clock.Unix(),
+	// 			}).MarshalBinary())
+	// 			delete(data, i)
+	// 			c++
+	// 			if c > 1000 {
+	// 				break
+	// 			}
+	// 		}
+	// 		return nil
+	// 	})
+	// 	fmt.Println(len(data))
+	// }
+
+	start := time.Now()
+	q := "崩坏 "
 	h := ngram.SplitMore(q).Hashes()
 	h2 := ngram.Split(q).Hashes()
 
-	res := mgr.CollectSimple(cursor.New(), bitmap.Values{Major: h2, Exact: h}, 5000)
-	for _, kis := range res {
-		fmt.Println(kis, data[int(kis.Key.LowUint64())])
+	res, jms := mgr.CollectSimple(cursor.New(), bitmap.Values{Major: h2, Exact: h}, 5000)
+	tags := []*types.Tag{}
+	db.View(func(tx *bbolt.Tx) error {
+		bk := tx.Bucket([]byte("tags"))
+		for _, kis := range res {
+			tag := types.UnmarshalTagBinary(bk.Get(kis.Key[:]))
+			tags = append(tags, tag)
+		}
+		return nil
+	})
+	sort.Slice(tags, func(i, j int) bool { return len(tags[i].Name) < len(tags[j].Name) })
+	for _, tag := range tags {
+		fmt.Println(tag)
 	}
-	fmt.Println(len(res))
+	fmt.Println(jms, time.Since(start))
 }

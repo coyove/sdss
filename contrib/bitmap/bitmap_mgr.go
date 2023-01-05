@@ -2,6 +2,7 @@ package bitmap
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -175,6 +176,27 @@ func (m *Manager) Saver() *SaveAggregator {
 	return m.current
 }
 
+func (m *Manager) WalkAsc(start int64, f func(*Range) bool) (err error) {
+	for {
+		if start == 0 {
+			// Since we use unix milli as the filename, 0 can't be a legal one.
+			start = 1
+		}
+		next, isLast := m.findNext(start - 1)
+		if isLast {
+			return io.EOF
+		}
+		b, err := m.load(next)
+		if err != nil {
+			return err
+		}
+		if b != nil && !f(b) {
+			return nil
+		}
+		start = next + 1
+	}
+}
+
 func (m *Manager) WalkDesc(start int64, f func(*Range) bool) (err error) {
 	for {
 		var b *Range
@@ -185,7 +207,7 @@ func (m *Manager) WalkDesc(start int64, f func(*Range) bool) (err error) {
 				b, err = m.Event.OnMissing(start + 1)
 				goto LOADED
 			}
-			return nil
+			return io.EOF
 		}
 		b, err = m.load(prev)
 
@@ -205,14 +227,15 @@ func (m *Manager) String() string {
 		len(m.dirFiles), m.current.Metrics(), m.cache.Len(), m.cache.Weight())
 }
 
-func (m *Manager) CollectSimple(dedup interface{ Add(Key) bool }, vs Values, n int) (res []KeyIdScore) {
+func (m *Manager) CollectSimple(dedup interface{ Add(Key) bool }, vs Values, n int) (res []KeyIdScore, jms []JoinMetrics) {
 	m.WalkDesc(clock.UnixMilli(), func(b *Range) bool {
-		b.Join(vs, -1, true, func(kis KeyIdScore) bool {
+		jm := b.Join(vs, -1, true, func(kis KeyIdScore) bool {
 			if dedup.Add(kis.Key) {
 				res = append(res, kis)
 			}
 			return len(res) < n
 		})
+		jms = append(jms, jm)
 		return len(res) < n
 	})
 	return
