@@ -4,6 +4,7 @@ go 1.16
 
 require (
 	github.com/FastFilter/xorfilter v0.1.2
+	github.com/NYTimes/gziphandler v1.1.1
 	github.com/aaaton/golem/v4 v4.0.1
 	github.com/aaaton/golem/v4/dicts/en v1.0.1
 	github.com/aws/aws-sdk-go v1.28.2

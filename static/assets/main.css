@@ -1,0 +1,41 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-size: 14px;
+}
+
+.tag-box {
+    display: inline-block;
+    border-radius: 16px;
+    padding: 8px;
+    margin: 0px 4px;
+    height: 32px;
+    line-height: 14px;
+    min-width: 50px;   
+    position: relative;
+}
+
+.tag-search-input .tag-box.normal {
+    background: #e3f2fd;
+    border: solid 2px #42a5f5;
+}
+
+.tag-search-input .tag-box.user-selected {
+    padding-right: 28px;
+}
+
+.tag-search-input .tag-box .closer {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    right: 6px;
+    top: 6px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.tag-search-input .tag-box.candidate.selected {
+    background: #fffddd;
+}

@@ -20,6 +20,10 @@ func (t *Tag) MarshalBinary() []byte {
 	return buf
 }
 
+func (t *Tag) Valid() bool {
+	return *t != Tag{}
+}
+
 func UnmarshalTagBinary(p []byte) *Tag {
 	t := &Tag{}
 	json.Unmarshal(p, t)

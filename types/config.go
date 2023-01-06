@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"io/ioutil"
+	"net/http"
 
 	"github.com/sirupsen/logrus"
 )
@@ -23,4 +24,8 @@ func LoadConfig(path string) {
 	if err := json.Unmarshal(buf, &Config); err != nil {
 		logrus.Fatal("load config unmarshal: ", err)
 	}
+}
+
+type Request struct {
+	*http.Request
 }
