@@ -8,11 +8,12 @@ import (
 )
 
 type Tag struct {
-	Id         uint64 `json:"I"`
-	Name       string `json:"O"`
-	Display    string `json:"D"`
-	CreateUser string `json:"U"`
-	CreateUnix int64  `json:"C"`
+	Id         uint64   `json:"I"`
+	Name       string   `json:"O"`
+	Display    string   `json:"D"`
+	Category   []string `json:"cat"`
+	CreateUser string   `json:"U"`
+	CreateUnix int64    `json:"C"`
 }
 
 func (t *Tag) MarshalBinary() []byte {
@@ -21,7 +22,7 @@ func (t *Tag) MarshalBinary() []byte {
 }
 
 func (t *Tag) Valid() bool {
-	return *t != Tag{}
+	return t.Id > 0
 }
 
 func UnmarshalTagBinary(p []byte) *Tag {

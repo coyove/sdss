@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/coyove/sdss/contrib/bitmap"
 	"github.com/coyove/sdss/contrib/cursor"
@@ -47,7 +48,18 @@ func HandleTagSearch(w http.ResponseWriter, r *types.Request) {
 	}
 
 	h := ngram.SplitMore(q).Hashes()
-	h2 := ngram.Split(q).Hashes()
+
+	var h2 []uint64
+	var allLetter = true
+	for _, r := range q {
+		if unicode.IsLower(r) || unicode.IsUpper(r) {
+		} else {
+			allLetter = false
+		}
+	}
+	if !allLetter {
+		h2 = ngram.Split(q).Hashes()
+	}
 
 	results := [][2]interface{}{}
 	if len(h) == 0 {
