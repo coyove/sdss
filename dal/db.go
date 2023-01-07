@@ -1,6 +1,8 @@
 package dal
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -61,104 +63,211 @@ func InitDB() {
 	}
 }
 
-// func IndexContent(nss []string, doc *types.Document) error {
-// 	tokens := ngram.Split(doc.Content)
-// 	if err := addDoc(doc); err != nil {
-// 		return err
-// 	}
-//
-// 	for _, ns := range nss {
-// 		if err := addBitmap(ns, doc.Id, tokens); err != nil {
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
-//
-// func SearchContent(ns string, cursor *SearchCursor) (res []*SearchDocument, err error) {
-// 	var includes, excludes []string
-// 	for k := range ngram.Split(cursor.Query) {
-// 		includes = append(includes, k)
-// 	}
-// 	for k := range ngram.Split(cursor.Exclude) {
-// 		excludes = append(excludes, k)
-// 	}
-//
-// 	start, ok := clock.ParseIdStrUnix(cursor.Start)
-// 	if !ok {
-// 		return nil, fmt.Errorf("invalid cursor start: %q", cursor.Start)
-// 	}
-//
-// 	cursor.Exhausted = true
-// 	var docTotal, docHits float64
-// 	mergeBitmaps(ns, includes, start, cursor.EndUnix, func(ids []string) bool {
-// 		docs, err0 := getDoc(ids)
-// 		if err != nil {
-// 			err = err0
-// 			return false
-// 		}
-//
-// 		for _, doc := range docs {
-// 			if doc == nil {
-// 				continue
-// 			}
-//
-// 			// fmt.Println("cand", ts, len(docs))
-// 			docTotal++
-//
-// 			if doc.Id > cursor.Start {
-// 				continue
-// 			}
-//
-// 			content := doc.Content
-// 			score := 0.0
-// 			for _, name := range includes {
-// 				if strings.Contains(content, name) {
-// 					score++
-// 				}
-// 			}
-//
-// 			// fmt.Println(ts, doc, score, len(includes), includes)
-// 			if score >= float64(len(includes))/2 {
-// 				docHits++
-// 				res = append(res, &SearchDocument{
-// 					Document: *doc,
-// 				})
-// 			}
-//
-// 			if len(res) > cursor.Count {
-// 				last := res[len(res)-1]
-// 				res = res[:len(res)-1]
-// 				cursor.Start = last.Id
-// 				cursor.Exhausted = false
-// 				return false
-// 			}
-// 		}
-// 		return true
-// 	})
-//
-// 	cursor.FalseRate = 0
-// 	if docTotal > 0 {
-// 		cursor.FalseRate = docHits / docTotal
-// 	}
-//
-// 	for i, res := range res {
-// 		fmt.Printf("%02d %s\n", i, res)
-// 	}
-// 	fmt.Println(cursor.FalseRate, docHits, docTotal, docHits, docTotal)
-// 	return
-// }
-//
-// type SearchCursor struct {
-// 	Query     string
-// 	Exclude   string
-// 	Start     string
-// 	EndUnix   int64
-// 	Count     int
-// 	Exhausted bool
-// 	FalseRate float64
-// }
-//
-// type SearchDocument struct {
-// 	types.Document
-// }
+type KeySortValue struct {
+	Key   []byte
+	Sort0 uint64
+	Sort1 []byte
+	Value []byte
+}
+
+func (ksv KeySortValue) sort0Key() []byte {
+	return append(types.Uint64Bytes(ksv.Sort0), ksv.Key...)
+}
+
+func (ksv KeySortValue) sort1Key() []byte {
+	return append(append(append(ksv.Sort1, 0), ksv.Key...), byte(len(ksv.Key)))
+}
+
+func (ksv KeySortValue) String() string {
+	return fmt.Sprintf("ksv(%x, %d, %v, %s)", ksv.Key, ksv.Sort0, ksv.Sort1, ksv.Value)
+}
+
+func KSVFromTag(tag *types.Tag) KeySortValue {
+	k := bitmap.Uint64Key(tag.Id)
+	return KeySortValue{
+		Key:   k[:],
+		Sort0: uint64(tag.UpdateUnix),
+		Sort1: []byte(tag.Name),
+		Value: tag.MarshalBinary(),
+	}
+}
+
+func KSVUpsert(tx *bbolt.Tx, bkPrefix string, ksv KeySortValue) error {
+	if len(ksv.Key) == 0 {
+		return fmt.Errorf("null key not allowed")
+	}
+	if len(ksv.Key) >= 256 {
+		return fmt.Errorf("key exceeds 255 bytes")
+	}
+
+	keyValue, err := tx.CreateBucketIfNotExists([]byte(bkPrefix))
+	if err != nil {
+		return err
+	}
+	sortKey, err := tx.CreateBucketIfNotExists([]byte(bkPrefix + "_s0k"))
+	if err != nil {
+		return err
+	}
+	sort1Key, err := tx.CreateBucketIfNotExists([]byte(bkPrefix + "_s1k"))
+	if err != nil {
+		return err
+	}
+	keySortSort2, err := tx.CreateBucketIfNotExists([]byte(bkPrefix + "_kss"))
+	if err != nil {
+		return err
+	}
+
+	oldSort := keySortSort2.Get(ksv.Key)
+	if len(oldSort) >= 8 {
+		old := KeySortValue{
+			Key:   ksv.Key,
+			Sort0: types.BytesUint64(oldSort[:8]),
+			Sort1: oldSort[8:],
+		}
+		if err := sortKey.Delete(old.sort0Key()); err != nil {
+			return err
+		}
+		if err := sort1Key.Delete(old.sort1Key()); err != nil {
+			return err
+		}
+	}
+	if err := sortKey.Put(ksv.sort0Key(), nil); err != nil {
+		return err
+	}
+	if err := sort1Key.Put(ksv.sort1Key(), nil); err != nil {
+		return err
+	}
+	if err := keySortSort2.Put(ksv.Key, append(types.Uint64Bytes(ksv.Sort0), ksv.Sort1...)); err != nil {
+		return err
+	}
+	return keyValue.Put(ksv.Key, ksv.Value)
+}
+
+func KSVDelete(tx *bbolt.Tx, bkPrefix string, key []byte) error {
+	keyValue := tx.Bucket([]byte(bkPrefix))
+	sortKey := tx.Bucket([]byte(bkPrefix + "_s0k"))
+	sort1Key := tx.Bucket([]byte(bkPrefix + "_s1k"))
+	keySortSort2 := tx.Bucket([]byte(bkPrefix + "_kss"))
+	if keyValue == nil || sortKey == nil || sort1Key == nil || keySortSort2 == nil {
+		return nil
+	}
+
+	oldSort := keySortSort2.Get(key)
+	if len(oldSort) >= 8 {
+		old := KeySortValue{
+			Key:   key,
+			Sort0: types.BytesUint64(oldSort[:8]),
+			Sort1: oldSort[8:],
+		}
+		if err := sortKey.Delete(old.sort0Key()); err != nil {
+			return err
+		}
+		if err := sort1Key.Delete(old.sort1Key()); err != nil {
+			return err
+		}
+	}
+	if err := keySortSort2.Delete(key); err != nil {
+		return err
+	}
+	if err := keyValue.Delete(key); err != nil {
+		return err
+	}
+	return nil
+}
+
+func KSVPaging(tx *bbolt.Tx, bkPrefix string, bySort int, desc bool, page, pageSize int) (res []KeySortValue, pages int) {
+	keyValue := tx.Bucket([]byte(bkPrefix))
+	sort0Key := tx.Bucket([]byte(bkPrefix + "_s0k"))
+	sort1Key := tx.Bucket([]byte(bkPrefix + "_s1k"))
+	if keyValue == nil || sort0Key == nil || sort1Key == nil {
+		return
+	}
+	var c *bbolt.Cursor
+	switch bySort {
+	case 0:
+		c = sort0Key.Cursor()
+	case 1:
+		c = sort1Key.Cursor()
+	default:
+		c = keyValue.Cursor()
+	}
+
+	i := 0
+	a, b := c.First()
+	if desc {
+		a, b = c.Last()
+	}
+
+	for len(a) > 0 {
+		if i >= (page+1)*pageSize {
+			break
+		}
+		if i/pageSize == page {
+			var ksv KeySortValue
+			switch bySort {
+			case 0:
+				ksv.Key = append([]byte{}, a[8:]...)
+				ksv.Value = append([]byte{}, keyValue.Get(a[8:])...)
+			case 1:
+				ln := int(a[len(a)-1])
+				k := a[len(a)-1-ln : len(a)-1]
+				ksv.Key = append([]byte{}, k...)
+				ksv.Value = append([]byte{}, keyValue.Get(k)...)
+			default:
+				ksv.Key = append([]byte{}, a...)
+				ksv.Value = append([]byte{}, b...)
+			}
+			res = append(res, ksv)
+		}
+		i++
+		if desc {
+			a, b = c.Prev()
+		} else {
+			a, b = c.Next()
+		}
+	}
+
+	n := keyValue.Stats().KeyN
+	pages = n / pageSize
+	if pages*pageSize != n {
+		pages++
+	}
+	return
+}
+
+func KSVPagingLocateKey(tx *bbolt.Tx, bkPrefix string, key []byte, pageSize int) (res []KeySortValue, page int, pages int) {
+	keyValue := tx.Bucket([]byte(bkPrefix))
+	if keyValue == nil {
+		return
+	}
+
+	c := keyValue.Cursor()
+	found := false
+	i := 0
+	for a, b := c.First(); len(a) > 0; a, b = c.Next() {
+		var ksv KeySortValue
+		ksv.Key = append([]byte{}, a...)
+		ksv.Value = append([]byte{}, b...)
+		found = found || bytes.Equal(key, ksv.Key)
+
+		res = append(res, ksv)
+		if len(res) == pageSize {
+			if found {
+				break
+			}
+			res = res[:0]
+		}
+		i++
+	}
+
+	if found {
+		page = i / pageSize
+	}
+
+	n := keyValue.Stats().KeyN
+	pages = n / pageSize
+	if pages*pageSize != n {
+		pages++
+	}
+	return
+}

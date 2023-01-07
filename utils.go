@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/bzip2"
 	"compress/gzip"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,12 +13,17 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
+	"text/template"
+	"time"
+	"unicode"
 
 	"github.com/NYTimes/gziphandler"
 	"github.com/coyove/sdss/contrib/bitmap"
 	"github.com/coyove/sdss/contrib/clock"
+	"github.com/coyove/sdss/contrib/cursor"
 	"github.com/coyove/sdss/contrib/ngram"
 	"github.com/coyove/sdss/dal"
 	"github.com/coyove/sdss/types"
@@ -36,6 +42,7 @@ func serve(pattern string, f func(http.ResponseWriter, *types.Request)) {
 		req := &types.Request{
 			Request: r,
 		}
+		time.Sleep(time.Second)
 		f(w, req)
 	}))
 	http.Handle(pattern, h)
@@ -134,11 +141,7 @@ func rebuildData(count int) {
 		}
 		line = strings.TrimSpace(line)
 		data[i] = line
-		m := ngram.SplitMore(line)
-		for k, v := range ngram.Split(line) {
-			m[k] = v
-		}
-		h := m.Hashes()
+		h := buildBitmapHashes(line)
 		if len(h) == 0 {
 			continue
 		}
@@ -152,21 +155,23 @@ func rebuildData(count int) {
 
 	for len(data) > 0 {
 		dal.TagsStore.DB.Update(func(tx *bbolt.Tx) error {
-			bk, _ := tx.CreateBucketIfNotExists([]byte("tags"))
-			bk2, _ := tx.CreateBucketIfNotExists([]byte("tags_lex"))
-			bk3, _ := tx.CreateBucketIfNotExists([]byte("tags_mod"))
 			c := 0
 			for i, line := range data {
 				k := bitmap.Uint64Key(uint64(i))
 				now := clock.UnixMilli()
-				bk.Put(k[:], (&types.Tag{
-					Id:         uint64(i),
-					Name:       line,
-					CreateUser: "root",
-					CreateUnix: now,
-				}).MarshalBinary())
-				bk2.Put([]byte(line), types.Uint64Bytes(uint64(now)))
-				bk3.Put(append(types.Uint64Bytes(uint64(now)), line...), k[:])
+				ksv := dal.KeySortValue{
+					Key:   k[:],
+					Sort0: uint64(now),
+					Sort1: []byte(line),
+					Value: (&types.Tag{
+						Id:         uint64(i),
+						Name:       line,
+						Creator:    "root",
+						CreateUnix: now,
+						UpdateUnix: now,
+					}).MarshalBinary(),
+				}
+				dal.KSVUpsert(tx, "tags", ksv)
 				delete(data, i)
 				c++
 				if c > 1000 {
@@ -178,3 +183,81 @@ func rebuildData(count int) {
 		fmt.Println(len(data))
 	}
 }
+
+func buildBitmapHashes(line string) []uint64 {
+	m := ngram.SplitMore(line)
+	for k, v := range ngram.Split(line) {
+		m[k] = v
+	}
+	return m.Hashes()
+}
+
+func collectSimple(q string) ([]*types.Tag, []bitmap.JoinMetrics) {
+	h := ngram.SplitMore(q).Hashes()
+
+	var h2 []uint64
+	var allLetter = true
+	for _, r := range q {
+		if unicode.IsLower(r) || unicode.IsUpper(r) {
+		} else {
+			allLetter = false
+		}
+	}
+	if !allLetter {
+		h2 = ngram.Split(q).Hashes()
+	}
+
+	if len(h) == 0 {
+		return nil, nil
+	}
+
+	res, jms := dal.TagsStore.CollectSimple(cursor.New(), bitmap.Values{Major: h2, Exact: h}, 2000)
+
+	var tags []*types.Tag
+	dal.TagsStore.View(func(tx *bbolt.Tx) error {
+		bk := tx.Bucket([]byte("tags"))
+		if bk == nil {
+			return nil
+		}
+		for _, kis := range res {
+			tag := types.UnmarshalTagBinary(bk.Get(kis.Key[:]))
+			if tag.Valid() {
+				tags = append(tags, tag)
+			}
+		}
+		return nil
+	})
+
+	sort.Slice(tags, func(i, j int) bool { return len(tags[i].Name) < len(tags[j].Name) })
+	return tags, jms
+}
+
+//go:embed static/*
+var httpStaticPages embed.FS
+
+var httpTemplates = template.Must(template.New("ts").Funcs(template.FuncMap{
+	"formatUnixMilli": func(v int64) string {
+		return time.Unix(0, v*1e6).Format("2006-01-02 15:04:05")
+	},
+	"generatePages": func(p int, pages int) (a []int) {
+		if pages > 0 {
+			a = append(a, 1)
+			i := p - 5
+			if i < 2 {
+				i = 2
+			} else if i > 2 {
+				a = append(a, 0)
+			}
+			for ; i < pages && len(a) < 10; i++ {
+				a = append(a, i)
+			}
+			if a[len(a)-1] != pages {
+				if a[len(a)-1]+1 != pages {
+					a = append(a, 0)
+				}
+				a = append(a, pages)
+			}
+		}
+		return
+	},
+}).ParseFS(httpStaticPages, "static/*.html"))

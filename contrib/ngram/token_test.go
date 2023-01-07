@@ -7,7 +7,7 @@ import (
 )
 
 func TestNGram(t *testing.T) {
-	fmt.Println(SplitMore("C4H7NO4"))
+	fmt.Println(SplitMore("C4H7NO4 c++"))
 	fmt.Println(isCodeString("AB"), isCodeString("Unsaved"), isCodeString(base64.URLEncoding.EncodeToString([]byte("base64"))))
 
 	q := `		女朋友要求戒指 5-7w 预算😋❤️🥺过分么。

@@ -1,0 +1,81 @@
+{{template "header.html" .}}
+<style>
+table { border-collapse: collapse; width: 100%; border-radius: 0.5em; box-shadow: 0 0 2px #666; margin: 1em 0; overflow: hidden }
+td { white-space: nowrap; padding: 0.1em 0.5em; }
+td.small { font-size:80%; width: 1px }
+td .display { display: flex; min-height: 2.5em; }
+td .tag-edit-confirm { display: flex; align-items: center }
+td .display input { outline:none; border:none; font:inherit; background:transparent; flex-grow: 1; }
+tr:nth-child(even) { background: #f4f5f6; }
+.page {display:inline-block; min-width: 2em; text-align:center}
+</style>
+
+<div style='display:flex;align-items:center'>
+    <input class=border1 style='flex-grow:1;margin-right:0.5em' id=search>
+    <div class='tag-box button' style='margin-right: 0.8em'><a href='javascript:location.href="?q="+encodeURIComponent(search.value)'>搜索</a></div>
+    <div class='tag-box button' style='margin-right: 0.8em'><a href='javascript:$("#tagnew").show()'>新标签</a></div>
+    <div class='tag-box button {{if and (eq .T.sort 1) (not .T.desc)}}selected{{end}}'><a href='?sort=1'>A-Z</a></div>
+    <div class='tag-box button {{if and (eq .T.sort 1) (.T.desc)}}selected{{end}}'><a href='?sort=1&desc=1'>Z-A</a></div>
+    <div class='tag-box button {{if and (eq .T.sort 0) (not .T.desc)}}selected{{end}}'><a href='?sort=0'>最旧</a></div>
+    <div class='tag-box button {{if and (eq .T.sort 0) (.T.desc)}}selected{{end}}'><a href='?sort=0&desc=1'>最新</a></div>
+</div>
+
+<div>
+    <table>
+        <tr id='tagnew' style='display:none'>
+            <td class='small'>新标签</td>
+            <td colspan=4 class='tag-edit'>
+                <div class=display >
+                    <input class=tag-edit-name value=""/>
+                    <div class=tag-edit-confirm>
+                        <div class='tag-box button' action=create>创建</div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        {{range .T.tags}}
+        <tr id='tag{{.Id}}'>
+            <td class='small'>{{.Id}}</td>
+            <td tag-id={{.Id}} class='tag-edit'>
+                <!--{{if .PendingReview}}
+                <div style='padding:0.5em 0 0 0;font-size:70%;color:#673ab7;text-align:center'>
+                    <span>等待生效，{{if .Name}}目前显示：{{.Name}}{{else}}新标签{{end}}</span>
+                </div>
+                {{end}}-->
+                <div class=display >
+                    <input class=tag-edit-name value="{{if .PendingReview}}{{.ReviewName}}{{else}}{{.Name}}{{end}}"/>
+                    <div id=tag-edit-confirm{{.Id}} class=tag-edit-confirm>
+                        {{if .PendingReview}}
+                        <div class='tag-box button' action=approve>通过</div>
+                        <div class='tag-box button' action=reject>驳回</div>
+                        {{else}}
+                        <div class='tag-box button' action=update><span>修改</span></div>
+                        <div class='tag-box button' action=delete><span>删除</span></div>
+                        {{end}}
+                    </div>
+                </div>
+            </td>
+            <td class='small'>{{.Creator}}</td>
+            <td class='small'>{{if .PendingReview}}-{{else}}+{{.Reviewer}}{{end}}</td>
+            <td class='small'><!--<div>{{formatUnixMilli .CreateUnix}}</div>--><div>{{formatUnixMilli .UpdateUnix}}</div></td>
+        </tr>
+        {{end}}
+    </table>
+</div>
+
+<div>
+    {{range (generatePages .T.page .T.pages)}}
+        {{if eq . 0}}
+        <span>...</span>
+        {{else}}
+        <div class='tag-box nav-page button {{if eq . $.T.page}}selected{{end}}'>
+            {{if eq . $.T.page}}
+            <span><b>{{.}}</b></span>
+            {{else}}
+            <a href='?p={{.}}&sort={{$.T.sort}}&desc={{if $.T.desc}}1{{end}}'>{{.}}</a>
+            {{end}}
+        </div>
+        {{end}}
+    {{end}}
+</div>
+{{template "footer.html" .}}

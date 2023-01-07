@@ -5,16 +5,27 @@
 body {
 }
 
+.border1 {
+    border-radius: 1.2em;
+    border: solid 2px #607d8b;
+    box-shadow: inset 0 0 2px #aaa;
+    font: inherit;
+}
+
+input.border1, textarea.border1 { padding: 0.2em 0.5em; font-size: 90% }
+
 .tag-box {
     display: inline-flex;
     border-radius: 1em;
     padding: 0 0.5em;
     margin: 0.1em;
     height: 2em;
+    min-width: 2em;
     line-height: 2em;
     position: relative;
     align-items: center;
     white-space: nowrap;
+    justify-content: center;
 }
 
 .tag-box.normal {
@@ -22,11 +33,20 @@ body {
     border: solid 2px #42a5f5;
 }
 
-.tag-search-input-container {
+.tag-box.button {
+    font-size: 90%;
+    background: #cfd8dc80;
     border: solid 2px #607d8b;
-    box-shadow: inset 0 0 2px #aaa;
+    cursor: pointer;
+}
+
+.tag-box.button:not(.selected):hover { background: #cfd8dc; }
+.tag-box.button.selected { background: #607d8b; color: white }
+.tag-box.button a { text-decoration: none; color: #233; }
+.tag-box.button.selected a { color: white }
+
+.tag-search-input-container {
     padding: 0.1em;
-    border-radius: 1.2em;
     position: relative;
     overflow: hidden;
 }
@@ -37,10 +57,11 @@ body {
     max-height: 10.5em;
     overflow-y: auto;
     overflow-x: hidden;
+    align-items: center;
 }
 
-.tag-search-input .tag-box .closer {
-    margin-left: 0.5em;
+.tag-search-input .tag-box .closer, .tag-search-input .tag-box .starer {
+    margin-left: 0.33em;
     width: 16px;
     height: 16px;
     border-radius: 50%;
@@ -48,8 +69,16 @@ body {
     opacity: 0.8;
 }
 
-.tag-search-input .tag-box .closer:hover {
-    opacity: 1;
+.tag-search-input .tag-box .starer { margin: 0 0.33em 0 0; }
+.tag-search-input .tag-box .closer:hover, .tag-search-input .tag-box .starer:hover { opacity: 1; }
+.tag-search-input .tag-box .starer:hover path { fill: #fffcaa; }
+.tag-search-input .tag-box.tag-required .starer circle { fill: #f90; }
+.tag-search-input .tag-box.tag-required { background: #ffe0b2; border-color: #f90; }
+
+.tag-search-input .tag-box.candidate {
+    border: dotted 1px #666; 
+    color: #666; 
+    cursor: pointer;
 }
 
 .tag-search-input .tag-box.candidate:hover {
@@ -89,3 +118,7 @@ body {
     100% { border-color: transparent; }
 }
 
+.svg16 {
+    width: 16px;
+    htight: 16px;
+}

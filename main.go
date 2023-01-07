@@ -17,12 +17,20 @@ func main() {
 	types.LoadConfig("config.json")
 	dal.InitDB()
 
+	// dal.TagsStore.View(func(tx *bbolt.Tx) error {
+	// 	fmt.Println(dal.KSVPaging(tx, "tags", 1, true, 2000, 10))
+	// 	return nil
+	// })
+	// return
+
 	if *debugRebuild > 0 {
 		rebuildData(*debugRebuild)
 	}
 
-	serve("/tag", HandleTagSearchPage)
+	serve("/post", HandlePostPage)
 	serve("/tag/search", HandleTagSearch)
+	serve("/tag/manage", HandleTagManage)
+	serve("/tag/manage/action", HandleTagAction)
 
 	http.Handle("/static/", http.StripPrefix("/", http.FileServer(http.FS(httpStaticAssets))))
 

@@ -28,4 +28,12 @@ func LoadConfig(path string) {
 
 type Request struct {
 	*http.Request
+	T map[string]interface{}
+}
+
+func (r *Request) AddTemplateValue(k string, v interface{}) {
+	if r.T == nil {
+		r.T = map[string]interface{}{}
+	}
+	r.T[k] = v
 }

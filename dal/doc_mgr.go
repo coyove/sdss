@@ -3,9 +3,25 @@ package dal
 import (
 	"sync"
 
+	"github.com/coyove/sdss/contrib/bitmap"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/types"
+	"go.etcd.io/bbolt"
 )
+
+func GetTag(id uint64) (*types.Tag, error) {
+	var t *types.Tag
+	err := TagsStore.View(func(tx *bbolt.Tx) error {
+		bk := tx.Bucket([]byte("tags"))
+		if bk == nil {
+			return nil
+		}
+		k := bitmap.Uint64Key(id)
+		t = types.UnmarshalTagBinary(bk.Get(k[:]))
+		return nil
+	})
+	return t, err
+}
 
 var cm struct {
 	mu sync.Mutex

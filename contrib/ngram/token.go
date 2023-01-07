@@ -137,8 +137,9 @@ func doSplit(text string, more bool) (res Results) {
 			prevRune = r
 			prevRuneNormalized = Normalize(r)
 		} else {
-			if r > 65535 {
-				sp.freq[text[prevStart:i]]++
+			if r > 65535 || (more && !unicode.IsSpace(r)) {
+				t := text[prevStart:i]
+				sp.freq[t]++
 				sp.total++
 			}
 			prevRune = utf8.RuneError
@@ -151,6 +152,9 @@ func doSplit(text string, more bool) (res Results) {
 BREAK:
 	for k, v := range sp.freq {
 		tok := res[k]
+		if tok.Name == "" {
+			tok.Name, tok.Raw = k, k
+		}
 		tok.Freq = v / float64(sp.total)
 		res[k] = tok
 	}

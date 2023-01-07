@@ -11,6 +11,11 @@ const KeySize = int(unsafe.Sizeof(Key{}))
 
 type Key [16]byte
 
+func BytesKey(v []byte) (k Key) {
+	copy(k[:], v)
+	return
+}
+
 func Uint64Key(v uint64) (k Key) {
 	binary.BigEndian.PutUint64(k[8:], v)
 	return
@@ -43,6 +48,16 @@ func (k Key) Less(k2 Key) bool {
 
 func (k Key) String() string {
 	return hex.EncodeToString(k[:])
+}
+
+func (k Key) Incr() Key {
+	for i := len(k) - 1; i >= 0; i-- {
+		k[i]++
+		if k[i] > 0 {
+			break
+		}
+	}
+	return k
 }
 
 func keysBytes(keys []Key) (x []byte) {

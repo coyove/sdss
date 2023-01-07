@@ -42,7 +42,7 @@ func (m *Manager) saveAggImpl(b *Range) error {
 	fn := m.getPath(b.Start())
 	x, err := b.Save(fn, b.Len() >= m.switchLimit)
 	if err == nil {
-		if bs, ok := m.Last(); ok && bs != b.Start() {
+		if bs, ok := m.Last(); !ok || bs != b.Start() {
 			err = m.ReloadFiles()
 		}
 	}
