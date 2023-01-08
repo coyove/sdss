@@ -26,6 +26,15 @@ func (tok Token) String() string {
 
 type Results map[string]Token
 
+func (r Results) Contains(r2 Results) bool {
+	for k := range r2 {
+		if _, ok := r[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (r Results) String() string {
 	var lines [][2]string
 	var max1 int

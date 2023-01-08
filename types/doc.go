@@ -12,10 +12,12 @@ type Tag struct {
 	Name          string   `json:"O"`
 	ReviewName    string   `json:"pn,omitempty"`
 	Display       string   `json:"D,omitempty"`
-	Category      []string `json:"cat"`
+	ParentIds     []uint64 `json:"P,omitempty"`
 	Creator       string   `json:"U"`
+	Modifier      string   `json:"M,omitempty"`
 	Reviewer      string   `json:"R,omitempty"`
 	PendingReview bool     `json:"pr,omitempty"`
+	Lock          bool     `json:"L,omitempty"`
 	CreateUnix    int64    `json:"C"`
 	UpdateUnix    int64    `json:"u"`
 }
@@ -23,6 +25,10 @@ type Tag struct {
 func (t *Tag) MarshalBinary() []byte {
 	buf, _ := json.Marshal(t)
 	return buf
+}
+
+func (t *Tag) String() string {
+	return string(t.MarshalBinary())
 }
 
 func (t *Tag) Valid() bool {

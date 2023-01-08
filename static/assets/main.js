@@ -10,16 +10,23 @@ function clickAjax(el, path, argsf, f, config) {
         }
 
         var url = path + '?ajax=1';
-        const args = argsf();
+        const args = argsf(el);
         for (const k in args) url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(args[k]);
         const that = $(this);
         const rect = this.getBoundingClientRect();
         const loader = $("<div style='display:inline-block;text-align:center'>" + window.CONST_loaderHTML + "</div>").
-            css('width', rect.width + 'px');
+            css('width', rect.width + 'px').
+            css('margin', that.css('margin'));
         that.hide();
         loader.insertBefore(that);
         $.post(url, function(data) {
-            f(data);
+            if (!data.success) {
+                alert('发生错误，代码：' + data.code);
+                return;
+            }
+            f(data, args);
+        }).fail(function() {
+            alert('网络错误');
         }).always(function() {
             that.show();
             loader.remove();
@@ -27,12 +34,133 @@ function clickAjax(el, path, argsf, f, config) {
     })
 }
 
+window.searchParams = new URLSearchParams(window.location.search)
+
 window.onload = function() {
-    $('.tag-search-input-container').each(function(_, container) {
+    function teShowEdit(tagID) {
+        window.searchParams.set('edittagid', tagID);
+        window.history.replaceState({}, '标签编辑 ' + tagID, '?' + window.searchParams.toString());
+        $("#list").hide();
+        $("#page").hide();
+        const tab = $("#edit").show().html('');
+        tab.append($("<tr><td><div class=display><div class='tag-box button'><span>返回</span></div></div></td></tr>"));
+        tab.find('.button').click(function() {
+            window.searchParams.delete('edittagid');
+            window.history.replaceState({}, '标签管理', '?' + window.searchParams.toString());
+            tab.hide();
+            $("#list").show();
+            $("#page").show();
+            if (tagID) $("#tag" + tagID).get(0).scrollIntoView();
+        });
+        return tab;
+    }
+    $('.tag-edit').each(function(_, el) {
+        const input = $(el).find('input');
+        const tagID = $(el).attr('tag-id');
+        const data = JSON.parse($(el).attr('tag-data') || '{}');
+        const path = '/tag/manage/action';
+        function reload() {
+            window.searchParams.set('edittagid', tagID);
+            location.href = '?' + window.searchParams.toString();
+        }
+        input.click(function() {
+            const tab = teShowEdit(tagID);
+            tab.append($("<tr><td class=small>ID</td><td><div class=display>" + (data.I || '新标签') + "</div></td></tr>"));
+            var tr = $("<tr><td class=small>标签名</td><td><div class=display><input class=tag-edit-name /></div></td></tr>");
+            var trInput = tr.find('input').val(data.O);
+            tr.find('.display').append($("<div class='tag-box button'><span>更新</span></div>"));
+            var btnUpdate = tr.find('.display .button').hide();
+            clickAjax(btnUpdate, path, function() {
+                return {'action': 'update', 'id': tagID, 'text': trInput.val(), 'parents': JSON.stringify(parentsSelector.getTags())};
+            }, reload);
+            tab.append(tr);
+
+            if (data.pr) {
+                var tr = $("<tr><td class=small>标签名（待审核）</td><td><div class=display><input class=tag-edit-name readonly/></div></td></tr>");
+                tr.find('input').val(data.pn);
+                tr.find('.display').append($("<div class='tag-box button' tag=approve><span>通过</span></div>")).
+                    append($("<div class='tag-box button' tag=reject><span>驳回</span></div>"));
+                clickAjax(tr.find('[tag=approve]'), path, function() { return {'action': 'approve', 'id': tagID} }, reload);
+                clickAjax(tr.find('[tag=reject]'), path, function() { return {'action': 'reject', 'id': tagID} }, reload);
+                tab.append(tr);
+            }
+
+            var trParents = $("<tr><td class=small>父标签</td><td><div class=display></div></td></tr>"), parentsSelector;
+            trParents.find('.display').append($(window.CONST_loaderHTML));
+            tab.append(trParents);
+            $.get('/tag/search?n=100&ids=' + (data.P || []).join(','), function(data) {
+                trParents.find('.display').html('').
+                    append($("<div max-tags=8 class='tag-search-input-container border1' style='width:100%'></div>"));
+                parentsSelector = trParents.find('.tag-search-input-container').get(0);
+                parentsSelector.onclicktag = function(id) { window.open('/tag/manage?edittagid=' + id); }
+                data.tags.forEach(function(t, i) { $(parentsSelector).attr('tag-data' + i, t[0] + ',' + t[1]) });
+                wrapTagSearchInput(parentsSelector );
+                btnUpdate.show();
+            })
+
+            tab.append($("<tr><td class=small>子标签</td><td><div class=display><a href='?pid=" + data.I + "'>查看</a></div></td></tr>"));
+
+            var tr = $("<tr><td class=small>状态</td><td><div class=display><span>" + (data.L ? '<b>锁定中</b>' : '正常' ) + "&nbsp;</span></div></td></tr>")
+            tr.find('.display').append($("<div class='tag-box button'><span>" + (data.L ? '解锁' : '锁定') + "</span></div>"));
+            clickAjax(tr.find('.display .button'), path, function(btn) {
+                return {'action': data.L ? 'unlock' : 'lock', 'id': tagID};
+            }, reload);
+            tab.append(tr);
+
+            tab.append($("<tr><td class=small>创建者</td><td><div class=display>" + data.U + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>创建时间</td><td><div class=display>" + new Date(data.C || 0).toLocaleString() + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>最近修改人</td><td><div class=display>" + (data.M || '') + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>最近审核人</td><td><div class=display>" + (data.R || '') + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>修改时间</td><td><div class=display>" + new Date(data.u || 0).toLocaleString() + "</div></td></tr>"));
+
+            var tr = $("<tr><td class=small></td><td><div class=display></div></td></tr>")
+            tr.find('.display').append($("<div class='tag-box button'><span>删除标签</span></div>"));
+            clickAjax(tr.find('.display .button'), path, function() {
+                return {'action': 'delete', 'id': tagID};
+            }, function(data) {
+                window.searchParams.delete('edittagid');
+                location.href = '?' + window.searchParams.toString();
+            }, {'ask': '确认删除 ' + input.val()});
+            tab.append(tr);
+        });
+    });
+
+    $('#tag-edit-new-tag').click(function() {
+        const tab = teShowEdit();
+        tab.append($("<tr><td class=small>ID</td><td><div class=display>新标签</div></td></tr>"));
+        var tr = $("<tr><td class=small>标签名</td><td><div class=display><input class=tag-edit-name /></div></td></tr>");
+        var trInput = tr.find('input');
+        tr.find('.display').append($("<div class='tag-box button'><span>创建</span></div>"));
+        clickAjax(tr.find('.display .button'), '/tag/manage/action', function() {
+            return {'action': 'create', 'text': trInput.val(), 'parents': JSON.stringify(parents.get(0).getTags())};
+        }, function(data) {
+            location.href = '?sort=0&desc=1';
+        });
+        tab.append(tr);
+
+        var tr = $("<tr><td class=small>父标签</td><td><div class=display></div></td></tr>");
+        tr.find('.display').append($("<div max-tags=8 class='tag-search-input-container border1'></div>"));
+        var parents = tr.find('.tag-search-input-container');
+        wrapTagSearchInput(parents.get(0));
+        tab.append(tr);
+    });
+
+    if (window.searchParams.has('edittagid')) 
+        $('#tag' + window.searchParams.get('edittagid')).find('input').click();
+
+    $('.tag-search-input-container').each(function(_, container) { wrapTagSearchInput(container) });
+    function wrapTagSearchInput(container) {
+        if (container.wrapped) return;
         const editable = $(container).attr('edit') == 'edit';
         const maxTags = parseInt($(container).attr('max-tags') || '99');
         const div = document.createElement('div');
         div.className = 'tag-search-input';
+
+        var onClickTag = function() {};
+        if ($(container).attr('onclicktag')) 
+            var onClickTag = function(id) { eval('var id = ' + id + '; ' + $(container).attr('onclicktag')) };
+        if (container.onclicktag)
+            var onClickTag = container.onclicktag;
 
         const el = document.createElement('div');
         el.setAttribute('contenteditable', true);
@@ -65,7 +193,7 @@ window.onload = function() {
                         selected[tagID].required = t.hasClass('tag-required');
                     }));
                 }
-                t.append($("<span>").text(src.text()));
+                t.append($("<span>").css('cursor', 'pointer').text(src.text()).click(function() { onClickTag(tagID) }));
                 t.append($(window.CONST_closeSVG).click(function(ev) {
                     delete selected[tagID];
                     t.remove();
@@ -119,7 +247,7 @@ window.onload = function() {
             this.timer = setTimeout(function(){
                 if (that.textContent != val) return;
                 loader.style.display = '';
-                $.get('/tag/search?q=' + encodeURIComponent(val), function(data) {
+                $.get('/tag/search?n=100&q=' + encodeURIComponent(val), function(data) {
                     if (that.textContent != val) return;
                     
                     reset();
@@ -185,11 +313,6 @@ window.onload = function() {
         reset();
 
         const history = JSON.parse(window.localStorage.getItem('tags-history') || '{}');
-        for (var i = 0; ; i++) {
-            const data = $(container).attr('tag-data' + i);
-            if (!data) break;
-            history[parseInt(data.split(',')[0])] = {'tag': data.split(',')[1]};
-        }
         for (const k in history) {
             const t = $("<div>").
                 addClass('candidate tag-box').
@@ -202,65 +325,14 @@ window.onload = function() {
             div.candidates.push(t);
         }
 
+        for (var i = 0; ; i++) {
+            const data = $(container).attr('tag-data' + i);
+            if (!data) break;
+            select($("<div>").attr('tag-id', data.split(',')[0]).text(data.split(',')[1]));
+        }
+
         updateInfo();
         container.getTags = function() { return selected; }
-    })
-
-    function teIcon(src) { return $(src).css('margin-left','0.25em'); }
-    $('.tag-edit').each(function(_, el) {
-        const input = $(el).find('input');
-        const tagID = $(el).attr('tag-id');
-        const path = '/tag/manage/action';
-        if (tagID) {
-            input.get(0).onfocus = function() {
-                $(el).find('.display-row').css('overflow', 'visible');
-            }
-            input.get(0).onblur = function() {
-                $(el).find('.display-row').css('overflow', 'hidden');
-            }
-            clickAjax($(el).find('[action=update]').append(teIcon(window.CONST_tickSVG)), path, function() {
-                return {
-                    'action': 'update',
-                    'id': tagID, 
-                    'text': input.val(),
-                };
-            }, function(data) {
-                if (data.success) {
-                } else {
-                    alert(data.code);
-                }
-            });
-            clickAjax($(el).find('[action=delete]').append(teIcon(window.CONST_closeSVG)), path, function() {
-                return {'action': 'delete', 'id': tagID};
-            }, function(data) {
-                if (data.success) {
-                    $('#tag' + tagID).remove();
-                } else {
-                    alert(data.code);
-                }
-            }, {'ask': '确认删除 ' + input.val()});
-            ['approve', 'reject'].forEach(function(action) { 
-                clickAjax($(el).find('[action=' + action + ']').
-                    append(teIcon(action == 'approve' ? window.CONST_tickSVG : window.CONST_closeSVG)),
-                    path, function() {
-                        return {'action':action, 'id': tagID};
-                    }, function(data) {
-                        if (data.success) {
-                            $('#tag' + tagID).remove();
-                        } else {
-                            alert(data.code);
-                        }
-                    });
-            });
-        }
-        clickAjax($(el).find('[action=create]'), path, function() {
-            return {'action': 'create', 'text': input.val()};
-        }, function(data) {
-            if (data.success) {
-                location.href = ('?sort=0&desc=1');
-            } else {
-                alert(data.code);
-            }
-        });
-    });
+        container.wrapped = true;
+    }
 }

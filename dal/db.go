@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -24,6 +25,7 @@ var (
 	TagsStore struct {
 		*bbolt.DB
 		*bitmap.Manager
+		locks [256]sync.Mutex
 	}
 )
 
@@ -176,6 +178,13 @@ func KSVDelete(tx *bbolt.Tx, bkPrefix string, key []byte) error {
 }
 
 func KSVPaging(tx *bbolt.Tx, bkPrefix string, bySort int, desc bool, page, pageSize int) (res []KeySortValue, pages int) {
+	if tx == nil {
+		TagsStore.View(func(tx *bbolt.Tx) error {
+			res, pages = KSVPaging(tx, bkPrefix, bySort, desc, page, pageSize)
+			return nil
+		})
+		return
+	}
 	keyValue := tx.Bucket([]byte(bkPrefix))
 	sort0Key := tx.Bucket([]byte(bkPrefix + "_s0k"))
 	sort1Key := tx.Bucket([]byte(bkPrefix + "_s1k"))
@@ -270,4 +279,14 @@ func KSVPagingLocateKey(tx *bbolt.Tx, bkPrefix string, key []byte, pageSize int)
 		pages++
 	}
 	return
+}
+
+func LockKey(key interface{}) {
+	k := fmt.Sprint(key)
+	TagsStore.locks[types.StrHash(k)%uint64(len(TagsStore.locks))].Lock()
+}
+
+func UnlockKey(key interface{}) {
+	k := fmt.Sprint(key)
+	TagsStore.locks[types.StrHash(k)%uint64(len(TagsStore.locks))].Unlock()
 }

@@ -1,13 +1,30 @@
 package dal
 
 import (
-	"sync"
+	"fmt"
 
 	"github.com/coyove/sdss/contrib/bitmap"
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/types"
 	"go.etcd.io/bbolt"
 )
+
+func BatchGetTags(ids []bitmap.Key) (tags []*types.Tag, err error) {
+	err = TagsStore.View(func(tx *bbolt.Tx) error {
+		bk := tx.Bucket([]byte("tags"))
+		if bk == nil {
+			return nil
+		}
+		for _, kis := range ids {
+			tag := types.UnmarshalTagBinary(bk.Get(kis[:]))
+			if tag.Valid() {
+				tags = append(tags, tag)
+			}
+		}
+		return nil
+	})
+	return
+}
 
 func GetTag(id uint64) (*types.Tag, error) {
 	var t *types.Tag
@@ -23,97 +40,25 @@ func GetTag(id uint64) (*types.Tag, error) {
 	return t, err
 }
 
-var cm struct {
-	mu sync.Mutex
-	m  map[string]*types.Document
-}
-
-func addDoc(doc *types.Document) error {
-	cm.mu.Lock()
-	if cm.m == nil {
-		cm.m = map[string]*types.Document{}
-	}
-	cm.m[doc.Id] = doc
-	cm.mu.Unlock()
-	// if _, err := db.UpdateItem(&dynamodb.UpdateItemInput{
-	// 	TableName: &tableFTS,
-	// 	Key: map[string]*dynamodb.AttributeValue{
-	// 		"nsid": {S: aws.String("doc")},
-	// 		"ts":   {S: aws.String(doc.Id)},
-	// 	},
-	// 	UpdateExpression: aws.String("set #a = :value"),
-	// 	ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-	// 		":value": {B: doc.MarshalBinary()},
-	// 	},
-	// 	ExpressionAttributeNames: map[string]*string{
-	// 		"#a": aws.String("content"),
-	// 	},
-	// }); err != nil {
-	// 	return fmt.Errorf("dal put document: store error: %v", err)
-	// }
-	return nil
-}
-
-func getDoc(id []string) (docs []*types.Document, err error) {
-	cm.mu.Lock()
-	for _, id := range id {
-		docs = append(docs, cm.m[id])
-	}
-	cm.mu.Unlock()
-	return
-	// resp, err := db.GetItem(&dynamodb.GetItemInput{
-	// 	TableName: &tableFTS,
-	// 	Key: map[string]*dynamodb.AttributeValue{
-	// 		"nsid": {S: aws.String("doc")},
-	// 		"ts":   {S: aws.String(id)},
-	// 	},
-	// })
-	// if err != nil {
-	// 	return nil, fmt.Errorf("dal get document: store error: %v", err)
-	// }
-
-	// v := resp.Item["content"]
-	// if v == nil {
-	// 	return nil, nil
-	// }
-	// doc = &types.Document{}
-	// return doc, json.Unmarshal(v.B, doc)
-}
-
-func scanDoc(unix int64) (docs []*types.Document, err error) {
-	lower := clock.UnixToIdStr(unix)
-	upper := clock.UnixToIdStr(unix + 1)
-	for id, doc := range cm.m {
-		if id >= lower && id < upper {
-			docs = append(docs, doc)
+func ProcessTagParentChanges(tx *bbolt.Tx, tag *types.Tag, old, new []uint64) error {
+	k := bitmap.Uint64Key(tag.Id)
+	for _, o := range old {
+		if err := KSVDelete(tx, fmt.Sprintf("tags_children_%d", o), k[:]); err != nil {
+			return err
 		}
 	}
-	// run := func(upper string) {
-	// 	resp, err := db.Query(&dynamodb.QueryInput{
-	// 		TableName:              &tableFTS,
-	// 		KeyConditionExpression: aws.String("nsid = :pk and #ts between :lower and :upper"),
-	// 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-	// 			":pk":    {S: aws.String("doc")},
-	// 			":lower": {S: aws.String(lower)},
-	// 			":upper": {S: aws.String(upper)},
-	// 		},
-	// 		ExpressionAttributeNames: map[string]*string{
-	// 			"#ts": aws.String("ts"),
-	// 		},
-	// 		ScanIndexForward: aws.Bool(false),
-	// 	})
-	// 	if err != nil {
-	// 		err = fmt.Errorf("dal scan document: store error: %v", err)
-	// 		return
-	// 	}
-	// 	for _, item := range resp.Items {
-	// 		doc := &types.Document{}
-	// 		json.Unmarshal(item["content"].B, doc)
-	// 		docs = append(docs, doc)
-	// 	}
-	// }
-	// run(clock.UnixDeciToIdStr(unix + 1))
-	return
+	now := clock.UnixMilli()
+	for _, n := range new {
+		if err := KSVUpsert(tx, fmt.Sprintf("tags_children_%d", n), KeySortValue{
+			Key:   k[:],
+			Sort0: uint64(now),
+			Sort1: []byte(tag.Name),
+			Value: nil,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type int64Heap struct {

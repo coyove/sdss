@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
-	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -30,6 +29,19 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.etcd.io/bbolt"
 )
+
+func getPagingArgs(r *types.Request) (int, int, bool, int) {
+	p, _ := strconv.Atoi(r.URL.Query().Get("p"))
+	p = imax(1, p)
+
+	sort, _ := strconv.Atoi(r.URL.Query().Get("sort"))
+	if sort < -1 || sort > 1 {
+		sort = 0
+	}
+	desc := r.URL.Query().Get("desc") == "1"
+	pageSize := 50
+	return p, sort, desc, pageSize
+}
 
 func serve(pattern string, f func(http.ResponseWriter, *types.Request)) {
 	h := gziphandler.GzipHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +204,7 @@ func buildBitmapHashes(line string) []uint64 {
 	return m.Hashes()
 }
 
-func collectSimple(q string) ([]*types.Tag, []bitmap.JoinMetrics) {
+func collectSimple(q string) ([]bitmap.Key, []bitmap.JoinMetrics) {
 	h := ngram.SplitMore(q).Hashes()
 
 	var h2 []uint64
@@ -212,24 +224,25 @@ func collectSimple(q string) ([]*types.Tag, []bitmap.JoinMetrics) {
 	}
 
 	res, jms := dal.TagsStore.CollectSimple(cursor.New(), bitmap.Values{Major: h2, Exact: h}, 2000)
-
-	var tags []*types.Tag
-	dal.TagsStore.View(func(tx *bbolt.Tx) error {
-		bk := tx.Bucket([]byte("tags"))
-		if bk == nil {
-			return nil
-		}
-		for _, kis := range res {
-			tag := types.UnmarshalTagBinary(bk.Get(kis.Key[:]))
-			if tag.Valid() {
-				tags = append(tags, tag)
-			}
-		}
-		return nil
-	})
-
-	sort.Slice(tags, func(i, j int) bool { return len(tags[i].Name) < len(tags[j].Name) })
+	var tags []bitmap.Key
+	for _, kis := range res {
+		tags = append(tags, kis.Key)
+	}
 	return tags, jms
+}
+
+func imax(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func imin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 //go:embed static/*

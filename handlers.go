@@ -4,15 +4,18 @@ import (
 	"embed"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coyove/sdss/contrib/bitmap"
 	"github.com/coyove/sdss/contrib/clock"
+	"github.com/coyove/sdss/contrib/ngram"
 	"github.com/coyove/sdss/dal"
 	"github.com/coyove/sdss/types"
 	"github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"go.etcd.io/bbolt"
 )
 
@@ -37,6 +40,9 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 
 	var old *types.Tag
 	if action != "create" {
+		dal.LockKey(id)
+		defer dal.UnlockKey(id)
+
 		old, err = dal.GetTag(id)
 		if !old.Valid() || err != nil {
 			logrus.Errorf("tag manage action %s, can't find %d: %v", action, id, err)
@@ -53,25 +59,29 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 			writeJSON(w, "success", false, "code", "INVALID_CONTENT")
 			return
 		}
+		var parentTags []uint64
+		if pt := q.Get("parents"); pt != "" {
+			gjson.Parse(pt).ForEach(func(key, value gjson.Result) bool {
+				parentTags = append(parentTags, key.Uint())
+				return true
+			})
+		}
+
 		var err error
 		if action == "create" {
 			err = dal.TagsStore.Update(func(tx *bbolt.Tx) error {
-				bk, err := tx.CreateBucketIfNotExists([]byte("tags"))
-				if err != nil {
-					return err
-				}
-				last, _ := bk.Cursor().Last()
-				lastId := bitmap.BytesKey(last).LowUint64()
 				now := clock.UnixMilli()
 				old = &types.Tag{
-					Id:            lastId + 1,
+					Id:            clock.Id(),
 					PendingReview: true,
 					ReviewName:    n,
 					Creator:       "root",
+					ParentIds:     parentTags,
 					CreateUnix:    now,
 					UpdateUnix:    now,
 				}
 				k = bitmap.Uint64Key(old.Id)
+				dal.ProcessTagParentChanges(tx, old, nil, parentTags)
 				return dal.KSVUpsert(tx, "tags", dal.KSVFromTag(old))
 			})
 		} else {
@@ -79,10 +89,13 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 				writeJSON(w, "success", false, "code", "TAG_PENDING_REVIEW")
 				return
 			}
-			old.PendingReview = true
-			old.ReviewName = n
-			old.UpdateUnix = clock.UnixMilli()
 			err = dal.TagsStore.Update(func(tx *bbolt.Tx) error {
+				dal.ProcessTagParentChanges(tx, old, old.ParentIds, parentTags)
+				old.ParentIds = parentTags
+				old.PendingReview = true
+				old.ReviewName = n
+				old.Modifier = "mod"
+				old.UpdateUnix = clock.UnixMilli()
 				return dal.KSVUpsert(tx, "tags", dal.KSVFromTag(old))
 			})
 		}
@@ -91,9 +104,10 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 			writeJSON(w, "success", false, "code", "INTERNAL_ERROR")
 			return
 		}
-		dal.TagsStore.Saver().AddAsync(k, h)
+		if old.ReviewName != old.Name {
+			dal.TagsStore.Saver().AddAsync(k, h)
+		}
 		writeJSON(w, "success", true, "tag", old)
-		return
 	case "delete":
 		if err := dal.TagsStore.Update(func(tx *bbolt.Tx) error {
 			return dal.KSVDelete(tx, "tags", k[:])
@@ -103,7 +117,6 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 			return
 		}
 		writeJSON(w, "success", true)
-		return
 	case "approve", "reject":
 		if !old.PendingReview {
 			writeJSON(w, "success", false, "code", "INVALID_TAG_STATE")
@@ -126,57 +139,72 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 			return
 		}
 		writeJSON(w, "success", true)
-		return
+	case "lock", "unlock":
+		old.Lock = action == "lock"
+		old.UpdateUnix = clock.UnixMilli()
+		if err := dal.TagsStore.Update(func(tx *bbolt.Tx) error {
+			return dal.KSVUpsert(tx, "tags", dal.KSVFromTag(old))
+		}); err != nil {
+			logrus.Errorf("tag manage action %s %d: %v", action, id, err)
+			writeJSON(w, "success", false, "code", "INTERNAL_ERROR")
+			return
+		}
+		writeJSON(w, "success", true)
+	default:
+		writeJSON(w, "success", false, "code", "INVALID_ACTION")
 	}
-	writeJSON(w, "success", false, "code", "INVALID_ACTION")
 }
 
 func HandleTagManage(w http.ResponseWriter, r *types.Request) {
-	p, _ := strconv.Atoi(r.URL.Query().Get("p"))
-	if p < 1 {
-		p = 1
-	}
-	sort, _ := strconv.Atoi(r.URL.Query().Get("sort"))
-	if sort < -1 || sort > 1 {
-		sort = 0
-	}
-	desc := r.URL.Query().Get("desc") == "1"
-
-	locateId, _ := strconv.ParseUint(r.URL.Query().Get("id"), 10, 64)
+	p, st, desc, pageSize := getPagingArgs(r)
 	q := r.URL.Query().Get("q")
+	pid, _ := strconv.ParseUint(r.URL.Query().Get("pid"), 10, 64)
 
 	var tags []*types.Tag
 	var pages int
 	if q != "" {
-		sort, desc = -1, false
-		tags, _ = collectSimple(q)
-		if len(tags) > 1000 {
-			tags = tags[:1000]
-		}
+		st, desc = -1, false
+		ids, _ := collectSimple(q)
+		tags, _ = dal.BatchGetTags(ids)
+		sort.Slice(tags, func(i, j int) bool { return len(tags[i].Name) < len(tags[j].Name) })
+		tags = tags[:imin(1000, len(tags))]
 	} else {
 		var results []dal.KeySortValue
-		dal.TagsStore.View(func(tx *bbolt.Tx) error {
-			if locateId > 0 {
-				k := bitmap.Uint64Key(locateId)
-				results, p, pages = dal.KSVPagingLocateKey(tx, "tags", k[:], 100)
-				sort = -1
-				desc = false
-			} else {
-				results, pages = dal.KSVPaging(tx, "tags", sort, desc, p-1, 100)
+		if pid > 0 {
+			results, pages = dal.KSVPaging(nil, fmt.Sprintf("tags_children_%d", pid), st, desc, p-1, pageSize)
+			ids := make([]bitmap.Key, len(results))
+			for i := range ids {
+				ids[i] = bitmap.BytesKey(results[i].Key)
 			}
-			return nil
-		})
-
-		tags = make([]*types.Tag, len(results))
-		for i := range tags {
-			tags[i] = types.UnmarshalTagBinary(results[i].Value)
+			tags, _ = dal.BatchGetTags(ids)
+			ptag, _ := dal.GetTag(pid)
+			r.AddTemplateValue("ptag", ptag)
+		} else {
+			results, pages = dal.KSVPaging(nil, "tags", st, desc, p-1, pageSize)
+			tags = make([]*types.Tag, len(results))
+			for i := range tags {
+				tags[i] = types.UnmarshalTagBinary(results[i].Value)
+			}
 		}
 	}
 
+	if editTagID, _ := strconv.Atoi(r.URL.Query().Get("edittagid")); editTagID > 0 {
+		found := false
+		for _, t := range tags {
+			found = found || t.Id == uint64(editTagID)
+		}
+		if !found {
+			if tag, _ := dal.GetTag(uint64(editTagID)); tag.Valid() {
+				tags = append(tags, tag)
+			}
+		}
+	}
+
+	r.AddTemplateValue("pid", pid)
 	r.AddTemplateValue("tags", tags)
 	r.AddTemplateValue("pages", pages)
 	r.AddTemplateValue("page", p)
-	r.AddTemplateValue("sort", sort)
+	r.AddTemplateValue("sort", st)
 	r.AddTemplateValue("desc", desc)
 	httpTemplates.ExecuteTemplate(w, "tag_manage.html", r)
 }
@@ -185,20 +213,38 @@ func HandleTagSearch(w http.ResponseWriter, r *types.Request) {
 	start := time.Now()
 	q := r.URL.Query().Get("q")
 	n, _ := strconv.Atoi(r.URL.Query().Get("n"))
-	if n <= 0 {
-		n = 100
-	} else if n > 100 {
-		n = 100
+	n = imin(100, n)
+	n = imax(1, n)
+
+	var ids []bitmap.Key
+	var jms []bitmap.JoinMetrics
+
+	if tagIDs := r.URL.Query().Get("ids"); tagIDs != "" {
+		for _, p := range strings.Split(tagIDs, ",") {
+			id, _ := strconv.ParseUint(p, 10, 64)
+			ids = append(ids, bitmap.Uint64Key(id))
+		}
+	} else {
+		ids, jms = collectSimple(q)
 	}
 
-	tags, jms := collectSimple(q)
+	tags, _ := dal.BatchGetTags(ids)
+	sort.Slice(tags, func(i, j int) bool { return len(tags[i].Name) < len(tags[j].Name) })
+
 	results := []interface{}{}
+	h := ngram.SplitMore(q)
 	for i, tag := range tags {
 		if i >= n {
 			break
 		}
 		if tag.Name != "" {
-			results = append(results, [2]interface{}{tag.Id, tag.Name})
+			if len(h) == 0 || ngram.SplitMore(tag.Name).Contains(h) {
+				results = append(results, [3]interface{}{
+					tag.Id,
+					tag.Name,
+					tag.ParentIds,
+				})
+			}
 		}
 	}
 	diff := time.Since(start)
