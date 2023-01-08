@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -11,7 +12,8 @@ type Tag struct {
 	Id            uint64   `json:"I"`
 	Name          string   `json:"O"`
 	ReviewName    string   `json:"pn,omitempty"`
-	Display       string   `json:"D,omitempty"`
+	Desc          string   `json:"D,omitempty"`
+	ReviewDesc    string   `json:"pd,omitempty"`
 	ParentIds     []uint64 `json:"P,omitempty"`
 	Creator       string   `json:"U"`
 	Modifier      string   `json:"M,omitempty"`
@@ -25,6 +27,14 @@ type Tag struct {
 func (t *Tag) MarshalBinary() []byte {
 	buf, _ := json.Marshal(t)
 	return buf
+}
+
+func (t *Tag) Data() string {
+	out := &bytes.Buffer{}
+	w := json.NewEncoder(out)
+	w.SetEscapeHTML(true)
+	w.Encode(t)
+	return out.String()
 }
 
 func (t *Tag) String() string {
@@ -41,6 +51,32 @@ func UnmarshalTagBinary(p []byte) *Tag {
 	if t.UpdateUnix == 0 {
 		t.UpdateUnix = t.CreateUnix
 	}
+	return t
+}
+
+type TagRecord struct {
+	Id         uint64 `json:"I"`
+	Action     string `json:"A"`
+	Modifier   string `json:"M"`
+	From       string `json:"F"`
+	To         string `json:"T"`
+	CreateUnix int64  `json:"C"`
+}
+
+type TagRecordDiff struct {
+	TagRecord
+	TagId uint64
+	Diffs [][3]interface{}
+}
+
+func (t *TagRecord) MarshalBinary() []byte {
+	buf, _ := json.Marshal(t)
+	return buf
+}
+
+func UnmarshalTagRecordBinary(p []byte) *TagRecord {
+	t := &TagRecord{}
+	json.Unmarshal(p, t)
 	return t
 }
 

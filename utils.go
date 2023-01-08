@@ -18,6 +18,7 @@ import (
 	"text/template"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/NYTimes/gziphandler"
 	"github.com/coyove/sdss/contrib/bitmap"
@@ -29,6 +30,18 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.etcd.io/bbolt"
 )
+
+func utf16Len(v string) (sz int) {
+	for len(v) > 0 {
+		_, n := utf8.DecodeRuneInString(v)
+		if n == 0 {
+			break
+		}
+		sz++
+		v = v[n:]
+	}
+	return
+}
 
 func getPagingArgs(r *types.Request) (int, int, bool, int) {
 	p, _ := strconv.Atoi(r.URL.Query().Get("p"))
@@ -53,6 +66,7 @@ func serve(pattern string, f func(http.ResponseWriter, *types.Request)) {
 		}()
 		req := &types.Request{
 			Request: r,
+			Start:   time.Now(),
 		}
 		time.Sleep(time.Second)
 		f(w, req)

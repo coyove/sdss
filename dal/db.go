@@ -66,10 +66,11 @@ func InitDB() {
 }
 
 type KeySortValue struct {
-	Key   []byte
-	Sort0 uint64
-	Sort1 []byte
-	Value []byte
+	Key    []byte
+	Sort0  uint64
+	Sort1  []byte
+	Value  []byte
+	NoSort bool
 }
 
 func (ksv KeySortValue) sort0Key() []byte {
@@ -118,29 +119,32 @@ func KSVUpsert(tx *bbolt.Tx, bkPrefix string, ksv KeySortValue) error {
 	if err != nil {
 		return err
 	}
-
-	oldSort := keySortSort2.Get(ksv.Key)
-	if len(oldSort) >= 8 {
-		old := KeySortValue{
-			Key:   ksv.Key,
-			Sort0: types.BytesUint64(oldSort[:8]),
-			Sort1: oldSort[8:],
+	if !ksv.NoSort {
+		oldSort := keySortSort2.Get(ksv.Key)
+		if len(oldSort) >= 8 {
+			old := KeySortValue{
+				Key:   ksv.Key,
+				Sort0: types.BytesUint64(oldSort[:8]),
+				Sort1: oldSort[8:],
+			}
+			if err := sortKey.Delete(old.sort0Key()); err != nil {
+				return err
+			}
+			if err := sort1Key.Delete(old.sort1Key()); err != nil {
+				return err
+			}
 		}
-		if err := sortKey.Delete(old.sort0Key()); err != nil {
+		if err := sortKey.Put(ksv.sort0Key(), nil); err != nil {
 			return err
 		}
-		if err := sort1Key.Delete(old.sort1Key()); err != nil {
+		if err := sort1Key.Put(ksv.sort1Key(), nil); err != nil {
 			return err
 		}
-	}
-	if err := sortKey.Put(ksv.sort0Key(), nil); err != nil {
-		return err
-	}
-	if err := sort1Key.Put(ksv.sort1Key(), nil); err != nil {
-		return err
-	}
-	if err := keySortSort2.Put(ksv.Key, append(types.Uint64Bytes(ksv.Sort0), ksv.Sort1...)); err != nil {
-		return err
+		if err := keySortSort2.Put(ksv.Key, append(types.Uint64Bytes(ksv.Sort0), ksv.Sort1...)); err != nil {
+			return err
+		}
+	} else {
+		keyValue.FillPercent = 0.9
 	}
 	return keyValue.Put(ksv.Key, ksv.Value)
 }
@@ -188,16 +192,23 @@ func KSVPaging(tx *bbolt.Tx, bkPrefix string, bySort int, desc bool, page, pageS
 	keyValue := tx.Bucket([]byte(bkPrefix))
 	sort0Key := tx.Bucket([]byte(bkPrefix + "_s0k"))
 	sort1Key := tx.Bucket([]byte(bkPrefix + "_s1k"))
-	if keyValue == nil || sort0Key == nil || sort1Key == nil {
-		return
-	}
+
 	var c *bbolt.Cursor
 	switch bySort {
 	case 0:
+		if keyValue == nil || sort0Key == nil {
+			return
+		}
 		c = sort0Key.Cursor()
 	case 1:
+		if keyValue == nil || sort1Key == nil {
+			return
+		}
 		c = sort1Key.Cursor()
 	default:
+		if keyValue == nil {
+			return
+		}
 		c = keyValue.Cursor()
 	}
 

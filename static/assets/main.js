@@ -38,8 +38,10 @@ window.searchParams = new URLSearchParams(window.location.search)
 
 window.onload = function() {
     function teShowEdit(tagID) {
-        window.searchParams.set('edittagid', tagID);
-        window.history.replaceState({}, '标签编辑 ' + tagID, '?' + window.searchParams.toString());
+        if (tagID) {
+            window.searchParams.set('edittagid', tagID);
+            window.history.replaceState({}, '标签编辑 ' + tagID, '?' + window.searchParams.toString());
+        }
         $("#list").hide();
         $("#page").hide();
         const tab = $("#edit").show().html('');
@@ -55,9 +57,9 @@ window.onload = function() {
         return tab;
     }
     $('.tag-edit').each(function(_, el) {
-        const input = $(el).find('input');
+        const input = $(el).find('.tag-edit-name');
         const tagID = $(el).attr('tag-id');
-        const data = JSON.parse($(el).attr('tag-data') || '{}');
+        const tagData = JSON.parse($(el).find('.tag-data').html() || '{}');
         const path = '/tag/manage/action';
         function reload() {
             window.searchParams.set('edittagid', tagID);
@@ -65,53 +67,68 @@ window.onload = function() {
         }
         input.click(function() {
             const tab = teShowEdit(tagID);
-            tab.append($("<tr><td class=small>ID</td><td><div class=display>" + (data.I || '新标签') + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>ID</td><td><div class=display>" + (tagData.I || '新标签') + "</div></td></tr>"));
             var tr = $("<tr><td class=small>标签名</td><td><div class=display><input class=tag-edit-name /></div></td></tr>");
-            var trInput = tr.find('input').val(data.O);
+            var trInput = tr.find('input').val(tagData.O);
             tr.find('.display').append($("<div class='tag-box button'><span>更新</span></div>"));
             var btnUpdate = tr.find('.display .button').hide();
             clickAjax(btnUpdate, path, function() {
-                return {'action': 'update', 'id': tagID, 'text': trInput.val(), 'parents': JSON.stringify(parentsSelector.getTags())};
+                return {
+                    'action': 'update',
+                    'id': tagID,
+                    'text': trInput.val(),
+                    'description': trDesc.val(),
+                    'parents': JSON.stringify(parentsSelector.getTags()),
+                };
             }, reload);
             tab.append(tr);
 
-            if (data.pr) {
+            var tr = $("<tr><td class=small>描述</td><td><div class=display><input class=tag-edit-desc /></div></td></tr>");
+            var trDesc = tr.find('input').val(tagData.D);
+            tab.append(tr);
+
+            if (tagData.pr) {
                 var tr = $("<tr><td class=small>标签名（待审核）</td><td><div class=display><input class=tag-edit-name readonly/></div></td></tr>");
-                tr.find('input').val(data.pn);
+                tr.find('input').val(tagData.pn);
                 tr.find('.display').append($("<div class='tag-box button' tag=approve><span>通过</span></div>")).
                     append($("<div class='tag-box button' tag=reject><span>驳回</span></div>"));
                 clickAjax(tr.find('[tag=approve]'), path, function() { return {'action': 'approve', 'id': tagID} }, reload);
                 clickAjax(tr.find('[tag=reject]'), path, function() { return {'action': 'reject', 'id': tagID} }, reload);
+                tab.append(tr);
+
+                var tr = $("<tr><td class=small>描述（待审核）</td><td><div class=display><input class=tag-edit-name readonly/></div></td></tr>");
+                tr.find('input').val(tagData.pd);
                 tab.append(tr);
             }
 
             var trParents = $("<tr><td class=small>父标签</td><td><div class=display></div></td></tr>"), parentsSelector;
             trParents.find('.display').append($(window.CONST_loaderHTML));
             tab.append(trParents);
-            $.get('/tag/search?n=100&ids=' + (data.P || []).join(','), function(data) {
+            $.get('/tag/search?n=100&ids=' + (tagData.P || []).join(','), function(data) {
                 trParents.find('.display').html('').
                     append($("<div max-tags=8 class='tag-search-input-container border1' style='width:100%'></div>"));
                 parentsSelector = trParents.find('.tag-search-input-container').get(0);
                 parentsSelector.onclicktag = function(id) { window.open('/tag/manage?edittagid=' + id); }
                 data.tags.forEach(function(t, i) { $(parentsSelector).attr('tag-data' + i, t[0] + ',' + t[1]) });
                 wrapTagSearchInput(parentsSelector );
-                btnUpdate.show();
+                if (!tagData.pr) btnUpdate.show();
             })
 
-            tab.append($("<tr><td class=small>子标签</td><td><div class=display><a href='?pid=" + data.I + "'>查看</a></div></td></tr>"));
+            tab.append($("<tr><td class=small>子标签</td><td><div class=display><a href='?pid=" + tagData.I + "'>查看</a></div></td></tr>"));
+            tab.append($("<tr><td class=small>变更历史</td><td><div class=display><a href='/tag/history?desc=1&id=" + tagData.I + "'>查看</a></div></td></tr>"));
 
-            var tr = $("<tr><td class=small>状态</td><td><div class=display><span>" + (data.L ? '<b>锁定中</b>' : '正常' ) + "&nbsp;</span></div></td></tr>")
-            tr.find('.display').append($("<div class='tag-box button'><span>" + (data.L ? '解锁' : '锁定') + "</span></div>"));
+            var tr = $("<tr><td class=small>状态</td><td><div class=display><span>" + (tagData.L ? '<b>锁定中</b>' : '正常' ) + "&nbsp;</span></div></td></tr>")
+            tr.find('.display').append($("<div class='tag-box button'><span>" + (tagData.L ? '解锁' : '锁定') + "</span></div>"));
             clickAjax(tr.find('.display .button'), path, function(btn) {
-                return {'action': data.L ? 'unlock' : 'lock', 'id': tagID};
+                return {'action': tagData.L ? 'unlock' : 'lock', 'id': tagID};
             }, reload);
             tab.append(tr);
 
-            tab.append($("<tr><td class=small>创建者</td><td><div class=display>" + data.U + "</div></td></tr>"));
-            tab.append($("<tr><td class=small>创建时间</td><td><div class=display>" + new Date(data.C || 0).toLocaleString() + "</div></td></tr>"));
-            tab.append($("<tr><td class=small>最近修改人</td><td><div class=display>" + (data.M || '') + "</div></td></tr>"));
-            tab.append($("<tr><td class=small>最近审核人</td><td><div class=display>" + (data.R || '') + "</div></td></tr>"));
-            tab.append($("<tr><td class=small>修改时间</td><td><div class=display>" + new Date(data.u || 0).toLocaleString() + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>创建者</td><td><div class=display>" + tagData.U + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>创建时间</td><td><div class=display>" + new Date(tagData.C || 0).toLocaleString() + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>最近修改人</td><td><div class=display>" + (tagData.M || '') + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>最近审核人</td><td><div class=display>" + (tagData.R || '') + "</div></td></tr>"));
+            tab.append($("<tr><td class=small>修改时间</td><td><div class=display>" + new Date(tagData.u || 0).toLocaleString() + "</div></td></tr>"));
 
             var tr = $("<tr><td class=small></td><td><div class=display></div></td></tr>")
             tr.find('.display').append($("<div class='tag-box button'><span>删除标签</span></div>"));
@@ -127,15 +144,18 @@ window.onload = function() {
 
     $('#tag-edit-new-tag').click(function() {
         const tab = teShowEdit();
-        tab.append($("<tr><td class=small>ID</td><td><div class=display>新标签</div></td></tr>"));
-        var tr = $("<tr><td class=small>标签名</td><td><div class=display><input class=tag-edit-name /></div></td></tr>");
+        var tr = $("<tr><td class=small>标签名</td><td><div class=display><input class=tag-edit-name placeholder='32字符' /></div></td></tr>");
         var trInput = tr.find('input');
         tr.find('.display').append($("<div class='tag-box button'><span>创建</span></div>"));
         clickAjax(tr.find('.display .button'), '/tag/manage/action', function() {
-            return {'action': 'create', 'text': trInput.val(), 'parents': JSON.stringify(parents.get(0).getTags())};
+            return {'action': 'create', 'text': trInput.val(), 'description': trDesc.val(), 'parents': JSON.stringify(parents.get(0).getTags())};
         }, function(data) {
             location.href = '?sort=0&desc=1';
         });
+        tab.append(tr);
+
+        var tr = $("<tr><td class=small>描述</td><td><div class=display><input class=tag-edit-desc placeholder='500字符' /></div></td></tr>");
+        var trDesc = tr.find('input');
         tab.append(tr);
 
         var tr = $("<tr><td class=small>父标签</td><td><div class=display></div></td></tr>");
@@ -146,7 +166,7 @@ window.onload = function() {
     });
 
     if (window.searchParams.has('edittagid')) 
-        $('#tag' + window.searchParams.get('edittagid')).find('input').click();
+        $('#tag' + window.searchParams.get('edittagid')).find('.tag-edit-name:first').click();
 
     $('.tag-search-input-container').each(function(_, container) { wrapTagSearchInput(container) });
     function wrapTagSearchInput(container) {
@@ -329,6 +349,7 @@ window.onload = function() {
             const data = $(container).attr('tag-data' + i);
             if (!data) break;
             select($("<div>").attr('tag-id', data.split(',')[0]).text(data.split(',')[1]));
+            el.blur();
         }
 
         updateInfo();

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -28,7 +29,8 @@ func LoadConfig(path string) {
 
 type Request struct {
 	*http.Request
-	T map[string]interface{}
+	Start time.Time
+	T     map[string]interface{}
 }
 
 func (r *Request) AddTemplateValue(k string, v interface{}) {
@@ -36,4 +38,8 @@ func (r *Request) AddTemplateValue(k string, v interface{}) {
 		r.T = map[string]interface{}{}
 	}
 	r.T[k] = v
+}
+
+func (r *Request) Elapsed() int64 {
+	return int64(time.Since(r.Start).Milliseconds())
 }

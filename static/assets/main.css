@@ -2,7 +2,23 @@
     box-sizing: border-box;
 }
 
-body {
+html, body {
+    height: 100%;
+    margin: 0;
+    font-family: "Arial","Microsoft YaHei","黑体","宋体",sans-serif;
+    position: relative;
+}
+
+#container {
+    min-height: 100%;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 0.5em 0.5em 0.5em 2.5em;
+}
+
+#header {
+    position: fixed; background: #516a76; height: 100%; width: 2em;
+    box-shadow: 1px 0 1px #ccc;
 }
 
 .border1 {
@@ -122,3 +138,14 @@ input.border1, textarea.border1 { padding: 0.2em 0.5em; font-size: 90% }
     width: 16px;
     htight: 16px;
 }
+
+table { border-collapse: collapse; width: 100%; border-radius: 0.5em; box-shadow: 0 0 2px #666; margin: 1em 0; overflow: hidden }
+td { white-space: nowrap; padding: 0.1em 0.5em; }
+td.small { font-size:80%; width: 1px }
+td .display { display: flex; min-height: 2.5em; align-items:center; flex-wrap: wrap }
+td.tag-edit .tag-edit-name { cursor: pointer; word-break: break-all;
+white-space: pre-wrap;flex-grow:1}
+td .display input { outline:none; border:none; font:inherit; background:transparent; flex-grow: 1; }
+td .tag-box { font-size: 90%; margin-right: 0.5em }
+tr:nth-child(even) { background: #f7f8f9; }
+.page {display:inline-block; min-width: 2em; text-align:center}

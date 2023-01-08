@@ -30,6 +30,7 @@ func main() {
 	serve("/post", HandlePostPage)
 	serve("/tag/search", HandleTagSearch)
 	serve("/tag/manage", HandleTagManage)
+	serve("/tag/history", HandleTagHistory)
 	serve("/tag/manage/action", HandleTagAction)
 
 	http.Handle("/static/", http.StripPrefix("/", http.FileServer(http.FS(httpStaticAssets))))
