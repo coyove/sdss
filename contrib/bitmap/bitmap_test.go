@@ -21,7 +21,6 @@ import (
 	"github.com/coyove/sdss/contrib/clock"
 	"github.com/coyove/sdss/contrib/ngram"
 	"github.com/coyove/sdss/contrib/roaring"
-	"github.com/coyove/sdss/types"
 )
 
 const day = 86400
@@ -174,7 +173,7 @@ func TestBitmap2(t *testing.T) {
 		line := strings.Join(records, " ")
 		hs := []uint64{}
 		for k := range ngram.Split(string(line)) {
-			hs = append(hs, types.StrHash(k))
+			hs = append(hs, ngram.StrHash(k))
 		}
 		hs = append(hs, uint64(i))
 		ba.AddAsync(Uint64Key(uint64(i)), hs)
@@ -196,8 +195,8 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 	}
 	var q []uint64
 	for k := range gs {
-		q = append(q, types.StrHash(k))
-		fmt.Println(k, "==>", types.StrHash(k))
+		q = append(q, ngram.StrHash(k))
+		fmt.Println(k, "==>", ngram.StrHash(k))
 		if len(q) > 32 {
 			break
 		}
