@@ -131,7 +131,7 @@ window.onload = function() {
             tab.append($("<tr><td class=small>修改时间</td><td><div class=display>" + new Date(tagData.u || 0).toLocaleString() + "</div></td></tr>"));
 
             var tr = $("<tr><td class=small></td><td><div class=display></div></td></tr>")
-            tr.find('.display').append($("<div class='tag-box button'><span>删除标签</span></div>"));
+            tr.find('.display').append($("<div class='tag-box button alert'><span>删除标签</span></div>"));
             clickAjax(tr.find('.display .button'), path, function() {
                 return {'action': 'delete', 'id': tagID};
             }, function(data) {
@@ -159,7 +159,7 @@ window.onload = function() {
         tab.append(tr);
 
         var tr = $("<tr><td class=small>父标签</td><td><div class=display></div></td></tr>");
-        tr.find('.display').append($("<div max-tags=8 class='tag-search-input-container border1'></div>"));
+        tr.find('.display').append($("<div max-tags=8 class='tag-search-input-container border1'></div>").css('width', '100%'));
         var parents = tr.find('.tag-search-input-container');
         wrapTagSearchInput(parents.get(0));
         tab.append(tr);

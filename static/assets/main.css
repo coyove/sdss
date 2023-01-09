@@ -21,6 +21,20 @@ html, body {
     box-shadow: 1px 0 1px #ccc;
 }
 
+#header .header-entry {
+    width: 2em;
+    height: 2em;
+    color: white;
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    text-decoration: none;
+}
+
+#header .header-entry:hover {
+    background-color: rgba(0, 0, 0, 0.2);
+}
+
 .border1 {
     border-radius: 1.2em;
     border: solid 2px #607d8b;
@@ -49,6 +63,11 @@ input.border1, textarea.border1 { padding: 0.2em 0.5em; font-size: 90% }
     border: solid 2px #42a5f5;
 }
 
+.tag-box.button.alert {
+    background: #ffcdd2;
+    border: solid 2px #f44336;
+}
+
 .tag-box.button {
     font-size: 90%;
     background: #cfd8dc80;
@@ -56,7 +75,7 @@ input.border1, textarea.border1 { padding: 0.2em 0.5em; font-size: 90% }
     cursor: pointer;
 }
 
-.tag-box.button:not(.selected):hover { background: #cfd8dc; }
+.tag-box.button:not(.selected):not(.alert):hover { background: #cfd8dc; }
 .tag-box.button.selected { background: #607d8b; color: white }
 .tag-box.button a { text-decoration: none; color: #233; }
 .tag-box.button.selected a { color: white }

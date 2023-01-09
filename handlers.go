@@ -61,7 +61,7 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 		}
 		fallthrough
 	case "create":
-		n, desc := q.Get("text"), q.Get("description")
+		n, desc := strings.TrimSpace(q.Get("text")), strings.TrimSpace(q.Get("description"))
 		h := buildBitmapHashes(n)
 		if len(n) < 1 || utf16Len(n) > 32 || len(h) == 0 || utf16Len(desc) > 500 {
 			writeJSON(w, "success", false, "code", "INVALID_CONTENT")
@@ -80,8 +80,12 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 		}
 
 		var err error
+		var exist bool
 		if action == "create" {
 			err = dal.TagsStore.Update(func(tx *bbolt.Tx) error {
+				if _, exist = dal.KSVFirstKeyOfSort1(tx, "tags", []byte(n)); exist {
+					return nil
+				}
 				now := clock.UnixMilli()
 				old = &types.Tag{
 					Id:            clock.Id(),
@@ -99,6 +103,11 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 			})
 		} else {
 			err = dal.TagsStore.Update(func(tx *bbolt.Tx) error {
+				if n != old.Name {
+					if _, exist = dal.KSVFirstKeyOfSort1(tx, "tags", []byte(n)); exist {
+						return nil
+					}
+				}
 				dal.ProcessTagParentChanges(tx, old, old.ParentIds, parentTags)
 				old.ParentIds = parentTags
 				old.PendingReview = true
@@ -112,6 +121,10 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 		if err != nil {
 			logrus.Errorf("tag manage action %s %d: %v", action, id, err)
 			writeJSON(w, "success", false, "code", "INTERNAL_ERROR")
+			return
+		}
+		if exist {
+			writeJSON(w, "success", false, "code", "TAG_ALREADY_EXISTS")
 			return
 		}
 		if old.ReviewName != old.Name {
@@ -168,7 +181,7 @@ func HandleTagAction(w http.ResponseWriter, r *types.Request) {
 }
 
 func HandleTagManage(w http.ResponseWriter, r *types.Request) {
-	p, st, desc, pageSize := getPagingArgs(r)
+	p, st, desc, pageSize := r.GetPagingArgs()
 	q := r.URL.Query().Get("q")
 	pid, _ := strconv.ParseUint(r.URL.Query().Get("pid"), 10, 64)
 
@@ -225,7 +238,7 @@ func HandleTagManage(w http.ResponseWriter, r *types.Request) {
 }
 
 func HandleTagHistory(w http.ResponseWriter, r *types.Request) {
-	p, _, desc, pageSize := getPagingArgs(r)
+	p, _, desc, pageSize := r.GetPagingArgs()
 	id, _ := strconv.ParseUint(r.URL.Query().Get("id"), 10, 64)
 
 	var results []dal.KeySortValue
@@ -279,6 +292,9 @@ func HandleTagHistory(w http.ResponseWriter, r *types.Request) {
 			old, _ := dal.BatchGetTags(from.ParentIds)
 			new, _ := dal.BatchGetTags(to.ParentIds)
 			res.Diffs = append(res.Diffs, [3]interface{}{"parents", old, new})
+		}
+		if from.PendingReview != to.PendingReview {
+			res.Diffs = append(res.Diffs, [3]interface{}{"pendingreview", from.PendingReview, to.PendingReview})
 		}
 		tags = append(tags, &res)
 	}

@@ -43,19 +43,6 @@ func utf16Len(v string) (sz int) {
 	return
 }
 
-func getPagingArgs(r *types.Request) (int, int, bool, int) {
-	p, _ := strconv.Atoi(r.URL.Query().Get("p"))
-	p = imax(1, p)
-
-	sort, _ := strconv.Atoi(r.URL.Query().Get("sort"))
-	if sort < -1 || sort > 1 {
-		sort = 0
-	}
-	desc := r.URL.Query().Get("desc") == "1"
-	pageSize := 50
-	return p, sort, desc, pageSize
-}
-
 func serve(pattern string, f func(http.ResponseWriter, *types.Request)) {
 	h := gziphandler.GzipHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		url := r.URL
@@ -287,4 +274,5 @@ var httpTemplates = template.Must(template.New("ts").Funcs(template.FuncMap{
 		}
 		return
 	},
+	"add": func(a, b int) int { return a + b },
 }).ParseFS(httpStaticPages, "static/*.html"))

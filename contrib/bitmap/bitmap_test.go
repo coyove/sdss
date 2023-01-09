@@ -54,7 +54,7 @@ func TestBitmap2(t *testing.T) {
 	now := clock.Unix() / day * day
 	rand.Seed(now)
 
-	if true {
+	if false {
 		rand.Seed(clock.Unix())
 		m := roaring.New()
 		m2 := roaring.New()
@@ -164,13 +164,6 @@ func TestBitmap2(t *testing.T) {
 	f, _ := os.Open(path)
 	defer f.Close()
 
-	// go func() {
-	// 	for {
-	// 		b.Save("cache")
-	// 		time.Sleep(time.Second * 10)
-	// 	}
-	// }()
-
 	rd := csv.NewReader(f)
 	for i := 0; false && i < 10000; i++ {
 		records, err := rd.Read()
@@ -226,7 +219,7 @@ cookbooks.com/Recipe-Details.aspx?id=876969,Gathered,"[""cream-style corn"", ""w
 			defer wg.Done()
 			// results = b.Join(q, nil, 1670192109, 50, JoinMajor)
 			var tmp []KeyIdScore
-			fmt.Println(b.Join(Values{Exact: []uint64{600} /* Oneof: []uint64{types.StrHash("cream")} */}, b.Start(), false, func(kis KeyIdScore) bool {
+			fmt.Println(b.Join(Values{Major: q /* Oneof: []uint64{types.StrHash("cream")} */}, b.Start(), false, func(kis KeyIdScore) bool {
 				tmp = append(tmp, kis)
 				return len(tmp) < 50
 			}))
@@ -301,7 +294,7 @@ func BenchmarkXorSmall(b *testing.B) {
 	fmt.Println(len(zzz))
 	for i := 0; i < b.N; i++ {
 		x, vs := xfBuild(zzz)
-		if !xfContains(x, vs, vs[len(vs)-1]) {
+		if !xfContains(x, vs, uint64(vs[len(vs)-1])) {
 			b.FailNow()
 		}
 	}

@@ -35,7 +35,7 @@
                 <div class=display >
                     {{if .Lock}}<div class='tag-box normal'>锁定</div>{{end}}
                     {{if .PendingReview}}<div class='tag-box normal'>待审核</div>{{end}}
-                    <div class=tag-edit-name>{{.Name}}</div>
+                    <div class=tag-edit-name>{{if .PendingReview}}{{.ReviewName}}{{else}}{{.Name}}{{end}}</div>
                 </div>
             </td>
             <td class='small'>{{formatUnixMilli .UpdateUnix}}</td>
@@ -55,7 +55,7 @@
             {{if eq . $.T.page}}
             <span><b>{{.}}</b></span>
             {{else}}
-            <a href='?p={{.}}&sort={{$.T.sort}}&desc={{if $.T.desc}}1{{end}}&pid={{$.T.pid}}'>{{.}}</a>
+            <a href='?{{$.BuildPageLink .}}&pid={{$.T.pid}}'>{{.}}</a>
             {{end}}
         </div>
         {{end}}

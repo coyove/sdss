@@ -255,39 +255,19 @@ func KSVPaging(tx *bbolt.Tx, bkPrefix string, bySort int, desc bool, page, pageS
 	return
 }
 
-func KSVPagingLocateKey(tx *bbolt.Tx, bkPrefix string, key []byte, pageSize int) (res []KeySortValue, page int, pages int) {
-	keyValue := tx.Bucket([]byte(bkPrefix))
-	if keyValue == nil {
+func KSVFirstKeyOfSort1(tx *bbolt.Tx, bkPrefix string, sort1 []byte) (key []byte, found bool) {
+	sort1Key := tx.Bucket([]byte(bkPrefix + "_s1k"))
+	if sort1Key == nil {
 		return
 	}
-
-	c := keyValue.Cursor()
-	found := false
-	i := 0
-	for a, b := c.First(); len(a) > 0; a, b = c.Next() {
-		var ksv KeySortValue
-		ksv.Key = append([]byte{}, a...)
-		ksv.Value = append([]byte{}, b...)
-		found = found || bytes.Equal(key, ksv.Key)
-
-		res = append(res, ksv)
-		if len(res) == pageSize {
-			if found {
-				break
-			}
-			res = res[:0]
+	c := sort1Key.Cursor()
+	a, _ := c.Seek(sort1)
+	if len(a) > 0 {
+		ln := int(a[len(a)-1])
+		if bytes.Equal(sort1, a[:len(a)-1-ln-1]) {
+			key = append([]byte{}, a[len(a)-1-ln:len(a)-1]...)
+			found = true
 		}
-		i++
-	}
-
-	if found {
-		page = i / pageSize
-	}
-
-	n := keyValue.Stats().KeyN
-	pages = n / pageSize
-	if pages*pageSize != n {
-		pages++
 	}
 	return
 }
