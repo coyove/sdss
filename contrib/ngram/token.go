@@ -6,8 +6,6 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/coyove/sdss/types"
 )
 
 type Token struct {
@@ -73,7 +71,7 @@ func (r Results) String() string {
 
 func (r Results) Hashes() (qs []uint64) {
 	for k := range r {
-		qs = append(qs, types.StrHash(k))
+		qs = append(qs, StrHash(k))
 	}
 	return
 }
@@ -267,4 +265,15 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 		lastr = r
 		runeCount++
 	}
+}
+
+func StrHash(s string) uint64 {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	var hash uint64 = offset64
+	for i := 0; i < len(s); i++ {
+		hash *= prime64
+		hash ^= uint64(s[i])
+	}
+	return uint64(hash)
 }
