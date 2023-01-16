@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/coyove/sdss/contrib/roaring"
-	"github.com/pierrec/lz4"
+	"github.com/pierrec/lz4/v4"
 )
 
 const (

@@ -164,7 +164,7 @@ func TestBitmap2(t *testing.T) {
 	defer f.Close()
 
 	rd := csv.NewReader(f)
-	for i := 0; false && i < 10000; i++ {
+	for i := 0; true && i < 10000; i++ {
 		records, err := rd.Read()
 		if err != nil {
 			break
