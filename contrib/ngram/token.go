@@ -210,7 +210,12 @@ func (s *splitter) do(v string, res map[string]Token, inQuote bool) {
 			return
 		}
 
-		x := lemma(v)
+		x := v
+		if len(v) > 3 {
+			x = lemma(v)
+		} else {
+			x = strings.ToLower(removeAccents(v))
+		}
 		if s.more {
 			for _, g := range trigram(x) {
 				s.freq[g]++
