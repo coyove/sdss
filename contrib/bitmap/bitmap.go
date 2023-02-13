@@ -426,7 +426,7 @@ func (b *subMap) writeTo(w io.Writer) error {
 func (b *Range) RoughSizeBytes() (sz int64) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	sz += int64(b.fastTable.GetSerializedSizeInBytes())
+	sz += int64(b.fastTable.GetSizeInBytes())
 	for i := range b.slots {
 		sz += int64(len(b.slots[i].xfs))
 		sz += int64(len(b.slots[i].keys)) * (int64(KeySize) + 4)

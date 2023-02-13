@@ -346,7 +346,7 @@ func BenchmarkXorSmall(b *testing.B) {
 // }
 
 func TestManager(t *testing.T) {
-	m, _ := NewManager("mgr", 10, 100)
+	m, _ := NewManager("mgr", 10, NewLRUCache(1e6))
 	m.DirMaxFiles = 10
 	for i := 0; i < 1e3; i++ {
 		m.Saver().AddAsync(Uint64Key(uint64(i)), []uint64{uint64(i)})

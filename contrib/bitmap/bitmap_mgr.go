@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coyove/common/lru"
 	"github.com/coyove/sdss/contrib/clock"
 	"golang.org/x/sync/singleflight"
 )
@@ -23,7 +22,7 @@ type Manager struct {
 	current      *SaveAggregator
 	currentRO    *Range
 	loader       singleflight.Group
-	cache        *lru.Cache
+	cache        *Cache
 
 	DirMaxFiles int
 
@@ -59,9 +58,9 @@ func (m *Manager) load(offset int64) (*Range, error) {
 		return m.currentRO, nil
 	}
 	fn := m.getPath(offset)
-	cached, ok := m.cache.Get(fn)
-	if ok {
-		return cached.(*Range), nil
+	cached := m.cache.Get(fn)
+	if cached != nil {
+		return cached, nil
 	}
 	out, err, _ := m.loader.Do(fn, func() (interface{}, error) {
 		start := time.Now()
@@ -80,7 +79,7 @@ func (m *Manager) load(offset int64) (*Range, error) {
 	if out == nil {
 		return nil, nil
 	}
-	m.cache.AddWeight(fn, out, out.(*Range).RoughSizeBytes())
+	m.cache.Add(fn, out.(*Range))
 	return out.(*Range), nil
 }
 
@@ -147,13 +146,16 @@ func (m *Manager) ReloadFiles() error {
 	return nil
 }
 
-func NewManager(dir string, switchLimit, cacheSize int64) (*Manager, error) {
+func NewManager(dir string, switchLimit int64, cache *Cache) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0777); err != nil {
 		return nil, err
 	}
+	if cache == nil {
+		cache = NewLRUCache(0)
+	}
 	m := &Manager{
 		dirname:     dir,
-		cache:       lru.NewCache(cacheSize),
+		cache:       cache,
 		switchLimit: switchLimit,
 	}
 	if err := m.ReloadFiles(); err != nil {
@@ -234,7 +236,7 @@ func (m *Manager) WalkDesc(start int64, f func(*Range) bool) (err error) {
 
 func (m *Manager) String() string {
 	return fmt.Sprintf("files: %d, saver: %.1f, cache: %d(%db)",
-		len(m.dirFiles), m.current.Metrics(), m.cache.Len(), m.cache.Weight())
+		len(m.dirFiles), m.current.Metrics(), m.cache.Len(), m.cache.curWeight)
 }
 
 func (m *Manager) CollectSimple(dedup interface{ Add(Key) bool }, vs Values, n int) (res []KeyIdScore, jms []JoinMetrics) {
