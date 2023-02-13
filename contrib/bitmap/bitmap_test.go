@@ -347,11 +347,12 @@ func BenchmarkXorSmall(b *testing.B) {
 
 func TestManager(t *testing.T) {
 	m, _ := NewManager("mgr", 10, 100)
-	// for i := 0; i < 1e2; i++ {
-	// 	m.Get().AddAsync(Uint64Key(uint64(i)), []uint64{uint64(i)})
-	// 	time.Sleep(time.Millisecond * 10)
-	// }
-	// time.Sleep(time.Second)
+	m.DirMaxFiles = 10
+	for i := 0; i < 1e3; i++ {
+		m.Saver().AddAsync(Uint64Key(uint64(i)), []uint64{uint64(i)})
+		time.Sleep(time.Millisecond * 10)
+	}
+	time.Sleep(time.Second)
 	m.WalkDesc(clock.UnixNano()/1e6, func(m *Range) bool {
 		if m != nil {
 			fmt.Println(m.String())

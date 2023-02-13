@@ -25,6 +25,8 @@ type Manager struct {
 	loader       singleflight.Group
 	cache        *lru.Cache
 
+	DirMaxFiles int
+
 	Event struct {
 		OnLoaded  func(string, time.Duration)
 		OnSaved   func(string, int, error, time.Duration)
@@ -127,7 +129,15 @@ func (m *Manager) ReloadFiles() error {
 	if err != nil {
 		return err
 	}
+
 	sort.Strings(names)
+	if m.DirMaxFiles > 0 {
+		for len(names) > m.DirMaxFiles {
+			os.Remove(filepath.Join(m.dirname, names[0]))
+			names = names[1:]
+		}
+	}
+
 	for _, n := range names {
 		if _, err := strconv.ParseInt(n, 16, 64); err != nil {
 			return fmt.Errorf("invalid filename %q: %v", n, err)
