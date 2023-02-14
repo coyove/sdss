@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,6 +130,12 @@ func (m *Manager) ReloadFiles() error {
 		return err
 	}
 
+	for i := len(names) - 1; i >= 0; i-- {
+		if strings.HasSuffix(names[i], ".mtfbak") {
+			names = append(names[:i], names[i+1:]...)
+		}
+	}
+
 	sort.Strings(names)
 	if m.DirMaxFiles > 0 {
 		for len(names) > m.DirMaxFiles {
@@ -139,7 +146,7 @@ func (m *Manager) ReloadFiles() error {
 
 	for _, n := range names {
 		if _, err := strconv.ParseInt(n, 16, 64); err != nil {
-			return fmt.Errorf("invalid filename %q: %v", n, err)
+			return fmt.Errorf("invalid filename %s/%s: %v", m.dirname, n, err)
 		}
 	}
 	m.dirFiles = names
