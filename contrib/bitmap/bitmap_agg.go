@@ -24,6 +24,8 @@ type SaveAggregator struct {
 	survey struct {
 		c, r int
 	}
+
+	window time.Duration
 }
 
 func (r *Range) AggregateSaves(callback func(*Range) error) *SaveAggregator {
@@ -32,6 +34,7 @@ func (r *Range) AggregateSaves(callback func(*Range) error) *SaveAggregator {
 	fts.workerOut = make(chan bool, 1)
 	fts.cb = callback
 	fts.current = r
+	fts.window = 100 * time.Millisecond
 
 	go func() {
 		for fts.worker() {
@@ -39,6 +42,11 @@ func (r *Range) AggregateSaves(callback func(*Range) error) *SaveAggregator {
 		fts.workerOut <- true
 	}()
 	return fts
+}
+
+func (sa *SaveAggregator) SetWindow(w time.Duration) *SaveAggregator {
+	sa.window = w
+	return sa
 }
 
 func (sa *SaveAggregator) Range() *Range {
@@ -55,12 +63,7 @@ func (sa *SaveAggregator) worker() bool {
 	var tasks []*aggTask
 
 MORE:
-	to := time.Millisecond * 100
-	if len(tasks) > 90 {
-		to = time.Millisecond * 10
-	} else {
-		to = time.Millisecond * time.Duration(100-len(tasks))
-	}
+	to := sa.window
 
 	select {
 	case t, ok := <-sa.tasks:

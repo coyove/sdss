@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coyove/sdss/contrib/roaring"
+	"github.com/coyove/sdss/contrib/simple"
 	"github.com/pierrec/lz4/v4"
 )
 
@@ -85,9 +86,11 @@ type subMap struct {
 }
 
 func (b *Range) Add(key Key, values []uint64) bool {
+	values = simple.Uint64.Dedup(values)
 	if len(values) == 0 {
 		panic("empty values")
 	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
