@@ -1,13 +1,13 @@
 package clock
 
 import (
+	"math"
 	"math/rand"
 	_ "runtime"
 	"strings"
 	"sync"
 	"time"
 	"unsafe"
-	_ "unsafe"
 )
 
 //go:linkname runtimeNano runtime.nanotime
@@ -24,28 +24,23 @@ var (
 	idLastSec int64
 	idMutex   sync.Mutex
 
-	randMu     sync.Mutex
-	randSeeded bool
-	serverId   = uint64(Rand()*(serverIdMask-maxCounter)) & (serverIdMask - maxCounter)
+	randMu   sync.Mutex
+	serverId = uint64(Rand()*math.MaxUint32) & (serverIdMask - maxCounter)
 )
 
 const (
-	serverIdMask = 0x3fffffff
-	maxCounter   = 0x7fff
-	tsBits       = 30
+	serverIdMask = 0x3ffffff
+	maxCounter   = 0x1fff
+	tsBits       = 26
 	tsOffset     = 1666666666
-	encodeTable  = "-.0123456789_abcdefghijklmnopqrstuvwxyz~"
-	// (2^64 - 40^12) / 2^64 = 0.1
-	// Count time up to year 2220.
+	encodeTable  = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	// log2(62^10) = 59 -> 33 + 26
 )
 
 func init() {
+	rand.Seed(UnixNano())
 	startupNano = runtimeNano()
 	startupWallNano = time.Now().UnixNano()
-}
-
-func ServerId() int {
-	return int(serverId >> 15)
 }
 
 func UnixNano() int64 {
@@ -85,29 +80,29 @@ func Id() (id uint64) {
 }
 
 func IdStr() string {
-	return Base40Encode(Id())
+	return Base62Encode(Id())
 }
 
-func Base40Encode(id uint64) string {
-	buf := make([]byte, 12)
+func Base62Encode(id uint64) string {
+	buf := make([]byte, 10)
 	for i := range buf {
-		m := id % 40
-		id = id / 40
+		m := id % 62
+		id = id / 62
 		buf[len(buf)-i-1] = encodeTable[m]
 	}
 	return *(*string)(unsafe.Pointer(&buf))
 }
 
 func UnixToIdStr(m int64) string {
-	return Base40Encode(uint64(m-tsOffset) << tsBits)
+	return Base62Encode(uint64(m-tsOffset) << tsBits)
 }
 
 func ParseIdUnix(id uint64) int64 {
 	return int64(id>>tsBits) + tsOffset
 }
 
-func Base40Decode(idstr string) (uint64, bool) {
-	if len(idstr) != 12 {
+func Base62Decode(idstr string) (uint64, bool) {
+	if len(idstr) != 10 {
 		return 0, false
 	}
 
@@ -117,22 +112,18 @@ func Base40Decode(idstr string) (uint64, bool) {
 		if idx < 0 {
 			return 0, false
 		}
-		id = (id + uint64(idx)) * 40
+		id = (id + uint64(idx)) * 62
 	}
-	return id / 40, true
+	return id / 62, true
 }
 
 func ParseIdStrUnix(idstr string) (int64, bool) {
-	id, ok := Base40Decode(idstr)
+	id, ok := Base62Decode(idstr)
 	return ParseIdUnix(id), ok
 }
 
 func Rand() float64 {
 	randMu.Lock()
-	if !randSeeded {
-		rand.Seed(UnixNano())
-		randSeeded = true
-	}
 	v := rand.Float64()
 	randMu.Unlock()
 	return v
