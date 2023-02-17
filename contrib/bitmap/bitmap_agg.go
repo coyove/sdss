@@ -30,7 +30,7 @@ type SaveAggregator struct {
 
 func (r *Range) AggregateSaves(callback func(*Range) error) *SaveAggregator {
 	fts := &SaveAggregator{}
-	fts.tasks = make(chan *aggTask, 1000)
+	fts.tasks = make(chan *aggTask, 10000)
 	fts.workerOut = make(chan bool, 1)
 	fts.cb = callback
 	fts.current = r
@@ -60,11 +60,11 @@ func (sa *SaveAggregator) Close() {
 
 func (sa *SaveAggregator) worker() bool {
 	start := clock.UnixNano()
+	tm := time.NewTimer(sa.window)
+
 	var tasks []*aggTask
 
 MORE:
-	to := sa.window
-
 	select {
 	case t, ok := <-sa.tasks:
 		if !ok {
@@ -73,13 +73,14 @@ MORE:
 			}
 		} else {
 			tasks = append(tasks, t)
-			if clock.UnixNano()-start < 1e9 {
+			if clock.UnixNano()-start < sa.window.Nanoseconds() {
 				goto MORE
 			}
 		}
-	case <-time.After(to):
+	case <-tm.C:
 	}
 
+	tm.Stop()
 	if len(tasks) == 0 {
 		return true
 	}

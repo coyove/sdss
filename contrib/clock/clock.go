@@ -1,6 +1,7 @@
 package clock
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	_ "runtime"
@@ -24,23 +25,38 @@ var (
 	idLastSec int64
 	idMutex   sync.Mutex
 
-	randMu   sync.Mutex
-	serverId = uint64(Rand()*math.MaxUint32) & (serverIdMask - maxCounter)
+	randMu sync.Mutex
 )
 
-const (
-	serverIdMask = 0x3ffffff
-	maxCounter   = 0x1fff
-	tsBits       = 26
-	tsOffset     = 1666666666
-	encodeTable  = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	// log2(62^10) = 59 -> 33 + 26
+var (
+	idStrWidth   int
+	lowBits      int
+	ctrBits      int
+	serverIdMask uint32
+	maxCounter   uint32
+	serverId     uint64
+	tsOffset     int64 = 1666666666
+	encodeTable        = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
+
+func Setup(width, ctr int) (int, int) {
+	idStrWidth = width
+	lowBits = int(math.Floor(math.Log2(math.Pow(62, float64(width))))) - 33
+	ctrBits = ctr
+	if ctr > lowBits {
+		panic(fmt.Sprintf("invalid clock parameters: %d and %d", width, ctr))
+	}
+	serverIdMask = 1<<lowBits - 1
+	maxCounter = 1<<ctrBits - 1
+	serverId = uint64(Rand()*math.MaxUint32) & uint64(serverIdMask-maxCounter)
+	return lowBits, ctrBits
+}
 
 func init() {
 	rand.Seed(UnixNano())
 	startupNano = runtimeNano()
 	startupWallNano = time.Now().UnixNano()
+	Setup(10, 13)
 }
 
 func UnixNano() int64 {
@@ -75,7 +91,7 @@ func Id() (id uint64) {
 	if idCounter >= maxCounter {
 		panic("too many IDs generated in 1ms")
 	}
-	id = uint64(sec)<<tsBits | serverId | uint64(idCounter)
+	id = uint64(sec)<<lowBits | serverId | uint64(idCounter)
 	return
 }
 
@@ -84,7 +100,7 @@ func IdStr() string {
 }
 
 func Base62Encode(id uint64) string {
-	buf := make([]byte, 10)
+	buf := make([]byte, idStrWidth)
 	for i := range buf {
 		m := id % 62
 		id = id / 62
@@ -94,15 +110,15 @@ func Base62Encode(id uint64) string {
 }
 
 func UnixToIdStr(m int64) string {
-	return Base62Encode(uint64(m-tsOffset) << tsBits)
+	return Base62Encode(uint64(m-tsOffset) << lowBits)
 }
 
 func ParseIdUnix(id uint64) int64 {
-	return int64(id>>tsBits) + tsOffset
+	return int64(id>>lowBits) + tsOffset
 }
 
 func Base62Decode(idstr string) (uint64, bool) {
-	if len(idstr) != 10 {
+	if len(idstr) != idStrWidth {
 		return 0, false
 	}
 
