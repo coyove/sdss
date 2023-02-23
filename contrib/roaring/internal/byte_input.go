@@ -109,12 +109,26 @@ func (b *ByteBuffer) Reset(buf []byte) {
 type ByteInputAdapter struct {
 	r         io.Reader
 	readBytes int
+	tmpbuf    []byte
 }
 
 // Next returns a slice containing the next n bytes from the buffer,
 // advancing the buffer as if the bytes had been returned by Read.
 func (b *ByteInputAdapter) Next(n int) ([]byte, error) {
-	buf := make([]byte, n)
+	return b._next(n, false)
+}
+
+func (b *ByteInputAdapter) _next(n int, tmp bool) ([]byte, error) {
+	var buf []byte
+	if tmp {
+		if cap(b.tmpbuf) < n {
+			b.tmpbuf = make([]byte, n)
+		}
+		buf = b.tmpbuf[:n]
+	} else {
+		buf = make([]byte, n)
+	}
+
 	m, err := io.ReadAtLeast(b.r, buf, n)
 	b.readBytes += m
 
@@ -127,7 +141,7 @@ func (b *ByteInputAdapter) Next(n int) ([]byte, error) {
 
 // ReadUInt32 reads uint32 with LittleEndian order
 func (b *ByteInputAdapter) ReadUInt32() (uint32, error) {
-	buf, err := b.Next(4)
+	buf, err := b._next(4, true)
 
 	if err != nil {
 		return 0, err
@@ -138,7 +152,7 @@ func (b *ByteInputAdapter) ReadUInt32() (uint32, error) {
 
 // ReadUInt16 reads uint16 with LittleEndian order
 func (b *ByteInputAdapter) ReadUInt16() (uint16, error) {
-	buf, err := b.Next(2)
+	buf, err := b._next(2, true)
 
 	if err != nil {
 		return 0, err
@@ -154,7 +168,7 @@ func (b *ByteInputAdapter) GetReadBytes() int64 {
 
 // SkipBytes skips exactly n bytes
 func (b *ByteInputAdapter) SkipBytes(n int) error {
-	_, err := b.Next(n)
+	_, err := b._next(n, true)
 
 	return err
 }
