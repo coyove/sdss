@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -234,6 +235,47 @@ func (m *Manager) WalkDesc(start int64, f func(*Range) bool) (err error) {
 			return nil
 		}
 		start = prev - 1
+	}
+}
+
+func (m *Manager) MultiWalkDesc(start int64, f func(*Range) bool) (err error) {
+	w := runtime.NumCPU()
+	for {
+		var starts []int64
+		for i := 0; i < w; i++ {
+			prev, isFirst := m.findPrev(start + 1)
+			if isFirst {
+				break
+			}
+			starts = append(starts, prev)
+			start = prev - 1
+		}
+
+		if len(starts) == 0 {
+			return io.EOF
+		}
+
+		var exited bool
+		var outErr error
+		var wg sync.WaitGroup
+		wg.Add(len(starts))
+		for _, s := range starts {
+			go func(s int64) {
+				defer wg.Done()
+				b, err := m.load(s)
+				if err != nil {
+					exited, outErr = true, err
+					return
+				}
+				if b != nil && !f(b) {
+					exited = true
+				}
+			}(s)
+		}
+		wg.Wait()
+		if exited {
+			return outErr
+		}
 	}
 }
 
