@@ -21,7 +21,6 @@ type Manager struct {
 	switchLimit  int64
 	dirFiles     []string
 	current      *SaveAggregator
-	currentRO    *Range
 	loader       singleflight.Group
 	cache        *Cache
 
@@ -40,7 +39,6 @@ func (m *Manager) getPath(base int64) string {
 
 func (m *Manager) saveAggImpl(b *Range) error {
 	start := time.Now()
-	m.currentRO = b.Clone()
 	fn := m.getPath(b.Start())
 	x, err := b.Save(fn, b.Len() >= m.switchLimit)
 	if err == nil {
@@ -55,8 +53,8 @@ func (m *Manager) saveAggImpl(b *Range) error {
 }
 
 func (m *Manager) load(offset int64) (*Range, error) {
-	if offset == m.currentRO.Start() {
-		return m.currentRO, nil
+	if offset == m.current.Range().Start() {
+		return m.current.Range(), nil
 	}
 	fn := m.getPath(offset)
 	cached := m.cache.Get(fn)
@@ -180,7 +178,6 @@ func NewManager(dir string, switchLimit int64, cache *Cache) (*Manager, error) {
 		}
 		m.current = b.AggregateSaves(m.saveAggImpl)
 	}
-	m.currentRO = m.current.Range().Clone()
 	return m, nil
 }
 
@@ -190,7 +187,6 @@ func (m *Manager) Saver() *SaveAggregator {
 	if m.current.Range().Len() >= m.switchLimit {
 		m.current.Close()
 		m.current = New(clock.UnixMilli()).AggregateSaves(m.saveAggImpl)
-		m.currentRO = m.current.Range().Clone()
 	}
 	return m.current
 }
