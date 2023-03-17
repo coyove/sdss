@@ -1,11 +1,16 @@
 package simple
 
-import "sort"
+import (
+	"reflect"
+	"sort"
+)
 
 var Uint64 struct {
-	Dedup    func([]uint64) []uint64
-	Contains func([]uint64, uint64) bool
-	Equal    func([]uint64, []uint64) bool
+	Dedup       func([]uint64) []uint64
+	Contains    func([]uint64, uint64) bool
+	ContainsAny func([]uint64, []uint64) bool
+	Equal       func([]uint64, []uint64) bool
+	Of          func(interface{}) []uint64
 }
 
 func init() {
@@ -27,6 +32,42 @@ func init() {
 			}
 		}
 		return v
+	}
+
+	Uint64.ContainsAny = func(a []uint64, b []uint64) bool {
+		if len(a)+len(b) < 10 {
+			for _, v := range a {
+				for _, v2 := range b {
+					if v == v2 {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		sa := uint64Sort{a}
+		sb := uint64Sort{b}
+		if !sort.IsSorted(sa) {
+			sort.Sort(sa)
+		}
+		if !sort.IsSorted(sb) {
+			sort.Sort(sb)
+		}
+
+		for _, b := range b {
+			idx := sort.Search(len(a), func(i int) bool { return a[i] >= b })
+			if idx < len(a) {
+				if a[idx] == b {
+					return true
+				}
+				if idx > 0 {
+					a = a[idx-1:]
+				}
+			} else {
+				break
+			}
+		}
+		return false
 	}
 
 	Uint64.Contains = func(a []uint64, b uint64) bool {
@@ -58,6 +99,22 @@ func init() {
 			}
 		}
 		return true
+	}
+
+	Uint64.Of = func(in interface{}) (res []uint64) {
+		rv := reflect.ValueOf(in)
+		res = make([]uint64, rv.Len())
+		for i := range res {
+			switch el := rv.Index(i); el.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				res[i] = uint64(el.Int())
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+				res[i] = el.Uint()
+			case reflect.Float32, reflect.Float64:
+				res[i] = uint64(el.Float())
+			}
+		}
+		return res
 	}
 }
 
