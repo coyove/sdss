@@ -141,7 +141,7 @@ var id_continue = set(unicode.IsLetter).
 	sub(unicode.Pattern_White_Space)
 
 // isContinue checks that the rune continues an identifier.
-func isContinue(r rune) bool {
+func IsContinue(r rune) bool {
 	// id_continue(r) && NFKC(r) in "id_continue*"
 	if !id_continue(r) {
 		return false

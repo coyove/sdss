@@ -126,7 +126,7 @@ func doSplit(text string, more bool) (res Results) {
 		// fmt.Println(string(lastr), string(r), isdiff(lastr, r))
 		if prevRune != utf8.RuneError {
 			isdiff := false
-			if isContinue(prevRune) != isContinue(r) {
+			if IsContinue(prevRune) != IsContinue(r) {
 				isdiff = true
 			}
 			if (prevRuneNormalized <= utf8.RuneSelf) != (Normalize(r) <= utf8.RuneSelf) {
@@ -140,7 +140,7 @@ func doSplit(text string, more bool) (res Results) {
 		}
 		i += sz
 
-		if isContinue(r) {
+		if IsContinue(r) {
 			prevRune = r
 			prevRuneNormalized = Normalize(r)
 		} else {
