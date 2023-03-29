@@ -124,7 +124,7 @@ func (b *Range) Add(key Key, values []uint64) bool {
 }
 
 func (b *Range) Join(vs Values, start int64, desc bool, f func(KeyIdScore) bool) (jm JoinMetrics) {
-	vs.clean()
+	vs.Clean()
 	fastStart := time.Now()
 	fast := b.joinFast(&vs)
 	jm.FastElapsed = time.Since(fastStart)

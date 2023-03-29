@@ -217,7 +217,7 @@ func (vs *Values) majorScore() int {
 	return s * 4 / 5
 }
 
-func (v *Values) clean() {
+func (v *Values) Clean() {
 	m := map[uint64]byte{}
 
 	add := func(a []uint64, typ byte) {
