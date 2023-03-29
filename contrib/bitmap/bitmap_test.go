@@ -360,3 +360,7 @@ func TestManager(t *testing.T) {
 		return true
 	})
 }
+
+func TestJump(t *testing.T) {
+
+}
