@@ -17,7 +17,7 @@ type record struct {
 	WallNano int64
 }
 
-var (
+const (
 	//  timeline -----+--------------+--------------+---->
 	//                |     ch 0     |     ch 1     |
 	//                +--------------+--------------+
@@ -25,11 +25,13 @@ var (
 	// 	              +------+-------+------+-------+
 	// 	              | safe | margin| safe | margin|
 	// 	              +------+-------+------+-------+
-	group  int64 = 100e6
-	window int64 = 10e6
-	margin int64 = 9.5e6 // NTP/PTP must be +/-'margin'ms accurate
-	groups int64 = group / window
+	group    int64 = 100e6
+	window   int64 = 10e6
+	Margin   int64 = 9.5e6 // NTP/PTP must be +/-'margin'ms accurate
+	Channels int64 = group / window
+)
 
+var (
 	tc   atomic.Int64
 	last atomic.Int64
 )
@@ -55,8 +57,8 @@ func UnixNano() int64 {
 type Future int64
 
 func Get(ch int64) Future {
-	if ch < 0 || ch >= groups {
-		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, groups))
+	if ch < 0 || ch >= Channels {
+		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, Channels))
 	}
 
 	ts := UnixNano()/group*group + ch*window
@@ -70,8 +72,8 @@ func Get(ch int64) Future {
 	upper := ts + window
 	ts += tc.Add(1)
 
-	if ts >= upper-margin {
-		panic(fmt.Sprintf("too many requests in %dms: %d >= %d - %d", window/1e6, ts, upper, margin))
+	if ts >= upper-Margin {
+		panic(fmt.Sprintf("too many requests in %dms: %d >= %d - %d", window/1e6, ts, upper, Margin))
 	}
 
 	if UnixNano() < upper {
