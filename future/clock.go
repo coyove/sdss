@@ -18,11 +18,20 @@ type record struct {
 }
 
 var (
-	group  int64 = 40e6
-	window int64 = 2.5e6
-	margin int64 = 1e6 // safe margin is 1ms, which means NTP/PTP must offer 1ms accuracy
-	tc     atomic.Int64
-	last   atomic.Int64
+	//  timeline -----+--------------+--------------+---->
+	//                |     ch 0     |     ch 1     |
+	//                +--------------+--------------+
+	// 		          |<-  window  ->|<-  window  ->|
+	// 	              +------+-------+------+-------+
+	// 	              | safe | margin| safe | margin|
+	// 	              +------+-------+------+-------+
+	group  int64 = 100e6
+	window int64 = 10e6
+	margin int64 = 9.5e6 // NTP/PTP must be +/-'margin'ms accurate
+	groups int64 = group / window
+
+	tc   atomic.Int64
+	last atomic.Int64
 )
 
 func init() {
@@ -46,17 +55,8 @@ func UnixNano() int64 {
 type Future int64
 
 func Get(ch int64) Future {
-	//                +------------+------------+
-	//                |    ch 0    |    ch 1    |
-	//  timeline ~ ~ -+------------+------------+- ~ ~
-	// 		          |<- window ->|<- window ->|
-	// 	              +------+-----+------+-----+
-	// 	              | safe | 1ms | safe | 1ms |
-	// 	              +------+--|--+------+-----+
-	//                          +-- margin
-
-	if ch < 0 || ch >= group/window {
-		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, group/window))
+	if ch < 0 || ch >= groups {
+		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, groups))
 	}
 
 	ts := UnixNano()/group*group + ch*window
@@ -67,8 +67,12 @@ func Get(ch int64) Future {
 		}
 	}
 
-	upper := ts + window - margin
+	upper := ts + window
 	ts += tc.Add(1)
+
+	if ts >= upper-margin {
+		panic(fmt.Sprintf("too many requests in %dms: %d >= %d - %d", window/1e6, ts, upper, margin))
+	}
 
 	if UnixNano() < upper {
 		return Future(ts)
@@ -83,4 +87,10 @@ func Get(ch int64) Future {
 func (f Future) Wait() {
 	diff := time.Duration(int64(f) - UnixNano())
 	time.Sleep(diff)
+}
+
+func (f Future) Channel() int64 {
+	ms := (int64(f) / 1e6) % 1e3
+	groupIdx := ms % (group / 1e6)
+	return groupIdx / (window / 1e6)
 }

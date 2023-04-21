@@ -8,20 +8,22 @@ import (
 )
 
 func TestNow(t *testing.T) {
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 20; i++ {
 		wg := sync.WaitGroup{}
 		var tot int64
-		for i := 0; i < 100; i++ {
+		const N = 5000
+		for i := 0; i < N; i++ {
 			wg.Add(1)
 			go func() {
 				start := UnixNano()
 				ts := Get(7)
+				// fmt.Println(ts.Channel())
 				ts.Wait()
 				atomic.AddInt64(&tot, UnixNano()-start)
 				wg.Done()
 			}()
 		}
 		wg.Wait()
-		fmt.Println(tot / 100 / 1e6)
+		fmt.Println(tot / N / 1e6)
 	}
 }
