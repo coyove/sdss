@@ -8,15 +8,15 @@ import (
 )
 
 func TestNow(t *testing.T) {
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 50; i++ {
 		wg := sync.WaitGroup{}
 		var tot int64
 		for i := 0; i < 100; i++ {
 			wg.Add(1)
 			go func() {
 				start := UnixNano()
-				ts := TimestampID(7)
-				SleepUntil(ts)
+				ts := Get(7)
+				ts.Wait()
 				atomic.AddInt64(&tot, UnixNano()-start)
 				wg.Done()
 			}()

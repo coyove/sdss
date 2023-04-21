@@ -18,9 +18,11 @@ type record struct {
 }
 
 var (
-	group int64 = 1e9
-	tc    atomic.Int64
-	last  atomic.Int64
+	group  int64 = 40e6
+	window int64 = 2.5e6
+	margin int64 = 1e6 // safe margin is 1ms, which means NTP/PTP must offer 1ms accuracy
+	tc     atomic.Int64
+	last   atomic.Int64
 )
 
 func init() {
@@ -41,12 +43,23 @@ func UnixNano() int64 {
 	return runtimeNano() - r.Nano + r.WallNano
 }
 
-func TimestampID(ch int64) int64 {
-	if ch < 0 || ch >= group/4e6 {
-		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, group/4e6))
+type Future int64
+
+func Get(ch int64) Future {
+	//                +------------+------------+
+	//                |    ch 0    |    ch 1    |
+	//  timeline ~ ~ -+------------+------------+- ~ ~
+	// 		          |<- window ->|<- window ->|
+	// 	              +------+-----+------+-----+
+	// 	              | safe | 1ms | safe | 1ms |
+	// 	              +------+--|--+------+-----+
+	//                          +-- margin
+
+	if ch < 0 || ch >= group/window {
+		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, group/window))
 	}
 
-	ts := UnixNano()/group*group + (ch*4+1)*1e6
+	ts := UnixNano()/group*group + ch*window
 
 	if ts != last.Load() {
 		if last.CompareAndSwap(last.Load(), ts) {
@@ -54,15 +67,20 @@ func TimestampID(ch int64) int64 {
 		}
 	}
 
+	upper := ts + window - margin
 	ts += tc.Add(1)
+
+	if UnixNano() < upper {
+		return Future(ts)
+	}
+
 	for ts < UnixNano() {
 		ts += group
 	}
-
-	return ts
+	return Future(ts)
 }
 
-func SleepUntil(ts int64) {
-	diff := time.Duration(ts - UnixNano())
+func (f Future) Wait() {
+	diff := time.Duration(int64(f) - UnixNano())
 	time.Sleep(diff)
 }
