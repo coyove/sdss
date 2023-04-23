@@ -8,6 +8,10 @@ import (
 )
 
 func TestNow(t *testing.T) {
+	StartWatcher(func(e error) {
+		fmt.Println(e)
+	})
+
 	for i := 0; i < 20; i++ {
 		wg := sync.WaitGroup{}
 		var tot int64

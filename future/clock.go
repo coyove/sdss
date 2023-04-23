@@ -2,15 +2,17 @@ package future
 
 import (
 	"fmt"
+	"net"
+	"runtime"
 	"sync/atomic"
 	"time"
 	_ "unsafe"
+
+	"github.com/coyove/sdss/future/chrony"
 )
 
 //go:linkname runtimeNano runtime.nanotime
 func runtimeNano() int64
-
-var startup atomic.Pointer[record]
 
 type record struct {
 	Nano     int64
@@ -26,14 +28,16 @@ const (
 	// 	              | safe | margin| safe | margin|
 	// 	              +------+-------+------+-------+
 	group    int64 = 100e6
-	window   int64 = 10e6
-	Margin   int64 = 9.5e6 // NTP/PTP must be +/-'margin'ms accurate
+	window   int64 = 12.5e6
+	Margin   int64 = 10.5e6 // NTP/PTP must be +/-'margin'ms accurate
 	Channels int64 = group / window
 )
 
 var (
-	tc   atomic.Int64
-	last atomic.Int64
+	startup atomic.Pointer[record]
+	tc      atomic.Int64
+	last    atomic.Int64
+	bad     atomic.Pointer[chrony.ReplySourceStats]
 )
 
 func init() {
@@ -49,6 +53,60 @@ func reload() {
 	time.AfterFunc(time.Hour*24, reload)
 }
 
+func StartWatcher(onError func(error)) {
+	if runtime.GOOS != "linux" {
+		onError(fmt.Errorf("OS not supported, assume correct clock"))
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			if err, ok := r.(error); ok {
+				onError(err)
+			} else {
+				onError(fmt.Errorf("watcher panic: %v", r))
+			}
+		}
+		time.AfterFunc(time.Second*10, func() { StartWatcher(onError) })
+	}()
+
+	conn, err := net.Dial("udp", ":323")
+	if err != nil {
+		onError(err)
+		return
+	}
+	defer conn.Close()
+
+	client := &chrony.Client{Connection: conn, Sequence: 1}
+	resp, err := client.Communicate(chrony.NewTrackingPacket())
+	if err != nil {
+		onError(err)
+		return
+	}
+	refId := resp.(*chrony.ReplyTracking).RefID
+
+	for i := 0; ; i++ {
+		resp, err := client.Communicate(chrony.NewSourceStatsPacket(int32(i)))
+		if err != nil {
+			break
+		}
+
+		data := resp.(*chrony.ReplySourceStats)
+		if data.RefID == refId {
+			if int64(data.EstimatedOffsetErr*1e9) > Margin {
+				bad.Store(data)
+				onError(fmt.Errorf("bad NTP clock %v, estimated error %v > %v",
+					data.IPAddr,
+					time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin)))
+			}
+			return
+		}
+	}
+
+	bad.Store(nil)
+	onError(fmt.Errorf("can't get source stats from chronyd"))
+}
+
 func UnixNano() int64 {
 	r := startup.Load()
 	return runtimeNano() - r.Nano + r.WallNano
@@ -59,6 +117,11 @@ type Future int64
 func Get(ch int64) Future {
 	if ch < 0 || ch >= Channels {
 		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, Channels))
+	}
+	if data := bad.Load(); data != nil {
+		panic(fmt.Errorf("bad NTP clock %v, estimated error %v > %v",
+			data.IPAddr,
+			time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin)))
 	}
 
 	ts := UnixNano()/group*group + ch*window
