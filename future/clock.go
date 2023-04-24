@@ -98,6 +98,8 @@ func StartWatcher(onError func(error)) {
 				onError(fmt.Errorf("bad NTP clock %v, estimated error %v > %v",
 					data.IPAddr,
 					time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin)))
+			} else {
+				bad.Store(nil)
 			}
 			return
 		}
