@@ -20,17 +20,20 @@ type record struct {
 }
 
 const (
-	//  timeline -----+--------------+--------------+---->
-	//                |     ch 0     |     ch 1     |
-	//                +--------------+--------------+
-	// 		          |<-  window  ->|<-  window  ->|
-	// 	              +------+-------+------+-------+
-	// 	              | safe | margin| safe | margin|
-	// 	              +------+-------+------+-------+
-	group    int64 = 100e6
-	window   int64 = 12.5e6
-	Margin   int64 = 10.5e6 // NTP/PTP must be +/-'margin'ms accurate
+	//  timeline -----+--------------+--------------+~~~+--------------+--------+---->
+	//                |                           group                         |
+	//                +--------------+--------------+~~~+--------------+--------+---->
+	//                |     ch 0     |     ch 1     |   |     ch 11    |        |
+	//                +--------------+--------------+~~~+--------------+        |
+	// 		          |    window    |    window    |   |    window    | cookie |
+	// 	              +------+-------+------+-------+~~~+------+-------+        |
+	// 	              | safe | margin| safe | margin|   | safe | margin|        |
+	// 	              +------+-------+------+-------+~~~+------+-------+--------+
+	group    int64 = 125e6
+	window   int64 = 10.4e6
+	Margin   int64 = 10.275e6 // NTP/PTP must be +/-'margin'ms accurate
 	Channels int64 = group / window
+	cookie   int64 = group - Channels*window // 0.2ms
 )
 
 var (
@@ -38,6 +41,7 @@ var (
 	tc      atomic.Int64
 	last    atomic.Int64
 	bad     atomic.Pointer[chrony.ReplySourceStats]
+	Chrony  atomic.Pointer[chrony.ReplySourceStats]
 )
 
 func init() {
@@ -101,11 +105,13 @@ func StartWatcher(onError func(error)) {
 			} else {
 				bad.Store(nil)
 			}
+			Chrony.Store(data)
 			return
 		}
 	}
 
 	bad.Store(nil)
+	Chrony.Store(nil)
 	onError(fmt.Errorf("can't get source stats from chronyd"))
 }
 
@@ -160,4 +166,17 @@ func (f Future) Channel() int64 {
 	ms := (int64(f) / 1e6) % 1e3
 	groupIdx := ms % (group / 1e6)
 	return groupIdx / (window / 1e6)
+}
+
+func (f Future) Cookie() (uint16, bool) {
+	next := int64(f)/group*group + group
+	if int64(f) >= next-cookie && int64(f) < next {
+		return uint16(int64(f) - (next - cookie)), true
+	}
+	return 0, false
+}
+
+func (f Future) ToCookie(c uint16) Future {
+	grouped := int64(f) / group * group
+	return Future(grouped + group - cookie + int64(c))
 }

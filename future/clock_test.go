@@ -2,6 +2,7 @@ package future
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,8 +21,13 @@ func TestNow(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				start := UnixNano()
-				ts := Get(7)
-				// fmt.Println(ts.Channel())
+				ts := Get(7) // int64(rand.Intn(Channels)))
+				// fmt.Println(ts.Channel(), ts.IsFixed(), ts.Fixed(), Future(ts.Fixed()).IsFixed())
+				v := uint16(rand.Int())
+				v0, _ := ts.ToCookie(v).Cookie()
+				if v0 != v {
+					panic("invalid cookie")
+				}
 				ts.Wait()
 				atomic.AddInt64(&tot, UnixNano()-start)
 				wg.Done()
