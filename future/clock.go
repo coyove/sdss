@@ -171,12 +171,12 @@ func (f Future) Channel() int64 {
 func (f Future) Cookie() (uint16, bool) {
 	next := int64(f)/group*group + group
 	if int64(f) >= next-cookie && int64(f) < next {
-		return uint16(int64(f) - (next - cookie)), true
+		return uint16(next - int64(f) - 1), true
 	}
 	return 0, false
 }
 
 func (f Future) ToCookie(c uint16) Future {
 	grouped := int64(f) / group * group
-	return Future(grouped + group - cookie + int64(c))
+	return Future(grouped + group - 1 - int64(c))
 }
