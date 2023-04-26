@@ -21,25 +21,27 @@ type record struct {
 
 const (
 	//  timeline -----+--------------+--------------+~~~+--------------+--------+---->
-	//                |                           group                         |
+	//                |                           Block                         |
 	//                +--------------+--------------+~~~+--------------+--------+---->
 	//                |     ch 0     |     ch 1     |   |     ch 11    |        |
 	//                +--------------+--------------+~~~+--------------+        |
-	// 		          |    window    |    window    |   |    window    | cookie |
-	// 	              +------+-------+------+-------+~~~+------+-------+        |
-	// 	              | safe | margin| safe | margin|   | safe | margin|        |
-	// 	              +------+-------+------+-------+~~~+------+-------+--------+
-	group    int64 = 125e6
-	window   int64 = 10.4e6
-	Margin   int64 = 10.275e6 // NTP/PTP must be +/-'margin'ms accurate
-	Channels int64 = group / window
-	cookie   int64 = group - Channels*window // 0.2ms
+	// 		          |    Window    |    Window    |   |    Window    | cookie |
+	// 	              +-----+--------+-----+--------+~~~+-----+--------+        |
+	// 	              |lo|hi| Margin |lo|hi| Margin |   |lo|hi| Margin |        |
+	// 	              +-----+--------+-----+--------+~~~+-----+--------+--------+
+	Block    int64 = 125e6
+	Window   int64 = 10.4e6                  // all timestamps fall into the current window will be stored in 'hi'
+	Margin   int64 = 10.1e6                  // NTP/PTP must be +/-'margin'ms accurate
+	hi       int64 = (Window - Margin) / 2   // 'hi' stores the current timestamps of the current window
+	lo       int64 = (Window - Margin) / 2   // 'lo' stores the overflowed timestamps of the same window from previous block
+	Channels int64 = Block / Window          // total number of channels
+	cookie   int64 = Block - Channels*Window // 0.2ms
 )
 
 var (
 	startup atomic.Pointer[record]
-	tc      atomic.Int64
-	last    atomic.Int64
+	tc      [Channels]atomic.Int64
+	last    [Channels]atomic.Int64
 	bad     atomic.Pointer[chrony.ReplySourceStats]
 	Chrony  atomic.Pointer[chrony.ReplySourceStats]
 )
@@ -132,27 +134,29 @@ func Get(ch int64) Future {
 			time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin)))
 	}
 
-	ts := UnixNano()/group*group + ch*window
+	ts := UnixNano()/Block*Block + ch*Window
 
-	if ts != last.Load() {
-		if last.CompareAndSwap(last.Load(), ts) {
-			tc.Store(0)
+	if old := last[ch].Load(); ts != old {
+		// fmt.Println(ch, old, ts)
+		if last[ch].CompareAndSwap(old, ts) {
+			tc[ch].Store(0)
 		}
 	}
 
-	upper := ts + window
-	ts += tc.Add(1)
+	upper := ts + Window
+	ts += tc[ch].Add(1)
 
-	if ts >= upper-Margin {
-		panic(fmt.Sprintf("too many requests in %dms: %d >= %d - %d", window/1e6, ts, upper, Margin))
+	if ts >= upper-Margin-lo {
+		panic(fmt.Sprintf("too many requests in %dms: %d >= %d - %d - %d",
+			Window/1e6, ts, upper, Margin, lo))
 	}
 
 	if UnixNano() < upper {
-		return Future(ts)
+		return Future(ts + lo)
 	}
 
 	for ts < UnixNano() {
-		ts += group
+		ts += Block
 	}
 	return Future(ts)
 }
@@ -164,12 +168,12 @@ func (f Future) Wait() {
 
 func (f Future) Channel() int64 {
 	ms := (int64(f) / 1e6) % 1e3
-	groupIdx := ms % (group / 1e6)
-	return groupIdx / (window / 1e6)
+	groupIdx := ms % (Block / 1e6)
+	return groupIdx / (Window / 1e6)
 }
 
 func (f Future) Cookie() (uint16, bool) {
-	next := int64(f)/group*group + group
+	next := int64(f)/Block*Block + Block
 	if int64(f) >= next-cookie && int64(f) < next {
 		return uint16(next - int64(f) - 1), true
 	}
@@ -177,6 +181,6 @@ func (f Future) Cookie() (uint16, bool) {
 }
 
 func (f Future) ToCookie(c uint16) Future {
-	grouped := int64(f) / group * group
-	return Future(grouped + group - 1 - int64(c))
+	grouped := int64(f) / Block * Block
+	return Future(grouped + Block - 1 - int64(c))
 }
