@@ -29,13 +29,13 @@ const (
 	// 	              +-----+--------+-----+--------+~~~+-----+--------+        |
 	// 	              |lo|hi| Margin |lo|hi| Margin |   |lo|hi| Margin |        |
 	// 	              +-----+--------+-----+--------+~~~+-----+--------+--------+
-	Block    int64 = 125e6
-	Window   int64 = 10.4e6                  // all timestamps fall into the current window will be stored in 'hi'
-	Margin   int64 = 10.1e6                  // NTP/PTP must be +/-'margin'ms accurate
-	hi       int64 = (Window - Margin) / 2   // 'hi' stores the current timestamps of the current window
-	lo       int64 = (Window - Margin) / 2   // 'lo' stores the overflowed timestamps of the same window from previous block
-	Channels int64 = Block / Window          // total number of channels
-	cookie   int64 = Block - Channels*Window // 0.2ms
+	Block        int64 = 100e6                         // 10 blocks in one second
+	channelWidth int64 = 8.32e6                        // 12 channels in one block
+	Channels     int64 = Block / channelWidth          // total number of channels
+	Margin       int64 = 8.20e6                        // NTP/PTP error must be less than half of +/-margin ms
+	hi           int64 = (channelWidth - Margin) / 2   // 'hi' stores the timestamps of the current channel of curent block
+	lo           int64 = (channelWidth - Margin) / 2   // 'lo' stores the overflowed timestamps of the same channel from previous block
+	cookie       int64 = Block - Channels*channelWidth // 0.16ms
 )
 
 var (
@@ -73,7 +73,7 @@ func StartWatcher(onError func(error)) {
 				onError(fmt.Errorf("watcher panic: %v", r))
 			}
 		}
-		time.AfterFunc(time.Second*10, func() { StartWatcher(onError) })
+		time.AfterFunc(time.Second*5, func() { StartWatcher(onError) })
 	}()
 
 	conn, err := net.Dial("udp", ":323")
@@ -99,11 +99,11 @@ func StartWatcher(onError func(error)) {
 
 		data := resp.(*chrony.ReplySourceStats)
 		if data.RefID == refId {
-			if int64(data.EstimatedOffsetErr*1e9) > Margin {
+			if int64(data.EstimatedOffsetErr*1e9) > Margin/2 {
 				bad.Store(data)
 				onError(fmt.Errorf("bad NTP clock %v, estimated error %v > %v",
 					data.IPAddr,
-					time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin)))
+					time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin/2)))
 			} else {
 				bad.Store(nil)
 			}
@@ -134,7 +134,7 @@ func Get(ch int64) Future {
 			time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin)))
 	}
 
-	ts := UnixNano()/Block*Block + ch*Window
+	ts := UnixNano()/Block*Block + ch*channelWidth
 
 	if old := last[ch].Load(); ts != old {
 		// fmt.Println(ch, old, ts)
@@ -143,12 +143,12 @@ func Get(ch int64) Future {
 		}
 	}
 
-	upper := ts + Window
+	upper := ts + channelWidth
 	ts += tc[ch].Add(1)
 
 	if ts >= upper-Margin-lo {
 		panic(fmt.Sprintf("too many requests in %dms: %d >= %d - %d - %d",
-			Window/1e6, ts, upper, Margin, lo))
+			channelWidth/1e6, ts, upper, Margin, lo))
 	}
 
 	if UnixNano() < upper {
@@ -169,7 +169,7 @@ func (f Future) Wait() {
 func (f Future) Channel() int64 {
 	ms := (int64(f) / 1e6) % 1e3
 	groupIdx := ms % (Block / 1e6)
-	return groupIdx / (Window / 1e6)
+	return groupIdx / (channelWidth / 1e6)
 }
 
 func (f Future) Cookie() (uint16, bool) {
