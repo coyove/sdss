@@ -46,28 +46,28 @@ type channelState struct {
 var (
 	startup atomic.Pointer[record]
 	atoms   [Channels]atomic.Pointer[channelState]
-	bad     atomic.Pointer[chrony.ReplySourceStats]
 	Chrony  atomic.Pointer[chrony.ReplySourceStats]
+	Base    atomic.Pointer[chrony.ReplySourceStats]
 )
 
 var test bool
 
 func init() {
-	reload()
+	reloadWallClock()
 }
 
-func reload() {
+func reloadWallClock() {
 	r := &record{
 		Nano:     runtimeNano(),
 		WallNano: time.Now().UnixNano(),
 	}
 	startup.Store(r)
-	time.AfterFunc(time.Hour*24, reload)
 }
 
 func StartWatcher(onError func(error)) {
 	if runtime.GOOS != "linux" {
 		onError(fmt.Errorf("OS not supported, assume correct clock"))
+		Base.CompareAndSwap(nil, &chrony.ReplySourceStats{})
 		return
 	}
 
@@ -106,19 +106,23 @@ func StartWatcher(onError func(error)) {
 		data := resp.(*chrony.ReplySourceStats)
 		if data.RefID == refId {
 			if int64(data.EstimatedOffsetErr*1e9) > Margin/2 {
-				bad.Store(data)
 				onError(fmt.Errorf("bad NTP clock %v, estimated error %v > %v",
 					data.IPAddr,
 					time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin/2)))
 			} else {
-				bad.Store(nil)
+				Base.CompareAndSwap(nil, data)
+
+				diff := time.Now().UnixNano() - UnixNano()
+				if !(-1e6 < diff && diff < 1e6) {
+					onError(fmt.Errorf("mono clock differs from wall clock: %v", time.Duration(diff)))
+					reloadWallClock()
+				}
 			}
 			Chrony.Store(data)
 			return
 		}
 	}
 
-	bad.Store(nil)
 	Chrony.Store(nil)
 	onError(fmt.Errorf("can't get source stats from chronyd"))
 }
@@ -128,16 +132,18 @@ func UnixNano() int64 {
 	return runtimeNano() - r.Nano + r.WallNano
 }
 
+func Now() time.Time {
+	return time.Unix(0, UnixNano())
+}
+
 type Future int64
 
 func Get(ch int64) Future {
 	if ch < 0 || ch >= Channels {
 		panic(fmt.Sprintf("invalid channel %d, out of range [0, %d)", ch, Channels))
 	}
-	if data := bad.Load(); data != nil {
-		panic(fmt.Errorf("bad NTP clock %v, estimated error %v > %v",
-			data.IPAddr,
-			time.Duration(data.EstimatedOffsetErr*1e9), time.Duration(Margin)))
+	if data := Base.Load(); data == nil {
+		panic(fmt.Sprintf("bad NTP clock"))
 	}
 
 	ts := UnixNano()/Block*Block + ch*channelWidth
