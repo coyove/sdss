@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNow(t *testing.T) {
@@ -47,5 +48,28 @@ func TestNow(t *testing.T) {
 		}
 		wg.Wait()
 		fmt.Println(tot / N / 1e6)
+	}
+}
+
+func TestFuzzyID(t *testing.T) {
+	const N = 500
+	rand.Seed(UnixNano())
+	m := sync.Map{}
+	test = true
+	for i := 0; i < 5; i++ {
+		wg := sync.WaitGroup{}
+		for j := 0; j < N/5; j++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				id := Get(1)
+				_, loaded := m.LoadOrStore(id, 1)
+				if loaded {
+					panic("duplicated id")
+				}
+				time.Sleep(time.Duration(rand.Intn(1000)+500) * time.Millisecond)
+			}(i*100 + j)
+		}
+		wg.Wait()
 	}
 }

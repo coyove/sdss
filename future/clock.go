@@ -38,13 +38,19 @@ const (
 	cookie       int64 = Block - Channels*channelWidth // 0.16ms
 )
 
+type channelState struct {
+	last int64
+	ctr  atomic.Int64
+}
+
 var (
 	startup atomic.Pointer[record]
-	tc      [Channels]atomic.Int64
-	last    [Channels]atomic.Int64
+	atoms   [Channels]atomic.Pointer[channelState]
 	bad     atomic.Pointer[chrony.ReplySourceStats]
 	Chrony  atomic.Pointer[chrony.ReplySourceStats]
 )
+
+var test bool
 
 func init() {
 	reload()
@@ -136,15 +142,20 @@ func Get(ch int64) Future {
 
 	ts := UnixNano()/Block*Block + ch*channelWidth
 
-	if old := last[ch].Load(); ts != old {
+	if old := atoms[ch].Load(); old == nil || ts != old.last {
 		// fmt.Println(ch, old, ts)
-		if last[ch].CompareAndSwap(old, ts) {
-			tc[ch].Store(0)
+		if atoms[ch].CompareAndSwap(old, &channelState{
+			last: ts,
+			// ctr is 0,
+		}) {
+			if test {
+				time.Sleep(time.Millisecond * 10)
+			}
 		}
 	}
 
 	upper := ts + channelWidth
-	ts += tc[ch].Add(1)
+	ts += atoms[ch].Load().ctr.Add(1)
 
 	if ts >= upper-Margin-lo {
 		panic(fmt.Sprintf("too many requests in %dms: %d >= %d - %d - %d",
