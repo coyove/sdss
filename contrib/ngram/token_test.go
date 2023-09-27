@@ -22,5 +22,5 @@ amo mi lunar :>`))
 
 	fmt.Println(trigram(q))
 	fmt.Println("===")
-	fmt.Println(Split(`Random selfies #randomppic #lits"match.;newbie" set @abc.def #tag事实🤔的s`))
+	fmt.Println(Split(`enable_diamonds Random selfies #randomppic #lits"match.;newbie" set @abc.def #tag事实🤔的s`))
 }
