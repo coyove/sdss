@@ -155,7 +155,11 @@ func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V) {
 		idx = (idx + 1) % num
 
 		if idx == idxStart {
-			panic("fatal: object space not enough")
+			if m.Fixed {
+				panic("map is full")
+			} else {
+				panic("fatal: space not enough")
+			}
 		}
 	}
 }

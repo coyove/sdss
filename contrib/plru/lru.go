@@ -82,6 +82,9 @@ func (m *Cache[K, V]) Add(key K, value V) {
 	var e *hashItem[K, lruValue[V]]
 	for i := 0; i < Lookahead; i++ {
 		m.ptr, e = m.store.nextItem(m.ptr)
+		if e == nil {
+			m.ptr, e = m.store.nextItem(0)
+		}
 		if e.val.Time < v0.Time {
 			k0, v0 = e.key, e.val
 		}

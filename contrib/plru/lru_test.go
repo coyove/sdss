@@ -4,9 +4,14 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"testing"
+	_ "unsafe"
 )
+
+//go:linkname int64Hash runtime.int64Hash
+func int64Hash(i uint64, seed uintptr) uintptr
 
 func hash(v string) uint64 {
 	h := sha1.Sum([]byte(v))
@@ -14,8 +19,7 @@ func hash(v string) uint64 {
 }
 
 func ihash(v int) uint64 {
-	h := sha1.Sum(strconv.AppendInt(nil, int64(v), 10))
-	return binary.BigEndian.Uint64(h[:8])
+	return uint64(int64Hash(uint64(v), 0))
 }
 
 func TestPLRU(t *testing.T) {
@@ -62,4 +66,58 @@ func TestRHMap(t *testing.T) {
 
 	fmt.Println(m.density())
 	// fmt.Println(m)
+}
+
+const BN = 1e6
+
+func BenchmarkGoMap(b *testing.B) {
+	b.StopTimer()
+	m2 := map[int]int{}
+
+	for i := 0; i < BN; i++ {
+		m2[i] = i + 1
+	}
+	b.StartTimer()
+
+	for i := 0; i < b.N; i++ {
+		x := rand.Intn(BN)
+		if m2[x] == 0 {
+			b.Fatal(i)
+		}
+	}
+}
+
+func BenchmarkRHMap(b *testing.B) {
+	b.StopTimer()
+	m := NewMap[int, int](BN, ihash)
+
+	for i := 0; i < BN; i++ {
+		m.Set(i, i+1)
+	}
+	b.StartTimer()
+
+	for i := 0; i < b.N; i++ {
+		x := rand.Intn(BN)
+		if v, _ := m.Get(x); v == 0 {
+			b.Fatal(i)
+		}
+	}
+}
+
+func BenchmarkGoMapAdd(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		m2 := map[int]int{}
+		for i := 0; i < BN/10; i++ {
+			m2[i] = i + 1
+		}
+	}
+}
+
+func BenchmarkRHMapAdd(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		m := NewMap[int, int](BN/10, ihash)
+		for i := 0; i < BN/10; i++ {
+			m.Set(i, i+1)
+		}
+	}
 }
