@@ -1,8 +1,6 @@
 package plru
 
 import (
-	"crypto/sha1"
-	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -10,21 +8,9 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname int64Hash runtime.int64Hash
-func int64Hash(i uint64, seed uintptr) uintptr
-
-func hash(v string) uint64 {
-	h := sha1.Sum([]byte(v))
-	return binary.BigEndian.Uint64(h[:8])
-}
-
-func ihash(v int) uint64 {
-	return uint64(int64Hash(uint64(v), 0))
-}
-
 func TestPLRU(t *testing.T) {
 	N := 10000
-	c := New[int, int](N, ihash, nil)
+	c := New[int, int](N, Hash.Int, nil)
 	for i := 0; i < N*2; i++ {
 		c.Add(i, i)
 	}
@@ -41,7 +27,7 @@ func TestPLRU(t *testing.T) {
 func TestRHMap(t *testing.T) {
 	const N = 1e6
 	m2 := map[string]int{}
-	m := NewMap[string, int](N*0.5, hash)
+	m := NewMap[string, int](N*0.5, Hash.Str)
 
 	for i := 0; i < N; i++ {
 		is := strconv.Itoa(i)
@@ -89,7 +75,7 @@ func BenchmarkGoMap(b *testing.B) {
 
 func BenchmarkRHMap(b *testing.B) {
 	b.StopTimer()
-	m := NewMap[int, int](BN, ihash)
+	m := NewMap[int, int](BN, Hash.Int)
 
 	for i := 0; i < BN; i++ {
 		m.Set(i, i+1)
@@ -115,7 +101,7 @@ func BenchmarkGoMapAdd(b *testing.B) {
 
 func BenchmarkRHMapAdd(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		m := NewMap[int, int](BN/10, ihash)
+		m := NewMap[int, int](BN/10, Hash.Int)
 		for i := 0; i < BN/10; i++ {
 			m.Set(i, i+1)
 		}

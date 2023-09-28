@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	_ "unsafe"
 )
 
 type Map[K comparable, V any] struct {
