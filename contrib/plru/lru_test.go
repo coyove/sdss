@@ -90,6 +90,24 @@ func BenchmarkRHMap(b *testing.B) {
 	}
 }
 
+func BenchmarkGoMapAddPrealloc(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		m2 := make(map[int]int, BN/10)
+		for i := 0; i < BN/10; i++ {
+			m2[i] = i + 1
+		}
+	}
+}
+
+func BenchmarkRHMapAddPrealloc(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		m := NewMap[int, int](BN/10, Hash.Int)
+		for i := 0; i < BN/10; i++ {
+			m.Set(i, i+1)
+		}
+	}
+}
+
 func BenchmarkGoMapAdd(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		m2 := map[int]int{}
@@ -101,7 +119,7 @@ func BenchmarkGoMapAdd(b *testing.B) {
 
 func BenchmarkRHMapAdd(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		m := NewMap[int, int](BN/10, Hash.Int)
+		m := NewMap[int, int](8, Hash.Int)
 		for i := 0; i < BN/10; i++ {
 			m.Set(i, i+1)
 		}

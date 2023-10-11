@@ -178,6 +178,26 @@ func (m *Map[K, V]) Foreach(f func(K, *V) bool) {
 	}
 }
 
+func (m *Map[K, V]) Keys() (res []K) {
+	for i := 0; i < len(m.items); i++ {
+		ip := &m.items[i]
+		if ip.occupied {
+			res = append(res, ip.key)
+		}
+	}
+	return
+}
+
+func (m *Map[K, V]) Values() (res []V) {
+	for i := 0; i < len(m.items); i++ {
+		ip := &m.items[i]
+		if ip.occupied {
+			res = append(res, ip.val)
+		}
+	}
+	return
+}
+
 func (m *Map[K, V]) nextItem(idx int) (int, *hashItem[K, V]) {
 	for i := idx; i < len(m.items); i++ {
 		if p := &m.items[i]; p.occupied {
