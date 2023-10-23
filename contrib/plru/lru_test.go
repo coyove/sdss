@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"strconv"
 	"testing"
+	"time"
 	_ "unsafe"
 )
 
@@ -22,6 +23,19 @@ func TestPLRU(t *testing.T) {
 		return true
 	})
 	fmt.Println(x, N)
+}
+
+func TestRHMapFixedFull(t *testing.T) {
+	const N = 1000
+	m := NewMap[int, int](N*0.5, Hash.Int)
+	m.Fixed = true
+
+	start := time.Now()
+	for i := 0; i < N; i++ {
+		m.Set(i, i+1)
+	}
+	fmt.Println(time.Since(start))
+	fmt.Println(m)
 }
 
 func TestRHMap(t *testing.T) {

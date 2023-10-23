@@ -21,8 +21,8 @@ type Map[K comparable, V any] struct {
 type hashItem[K, V any] struct {
 	key      K
 	val      V
-	dist     int32
 	occupied bool
+	dist     uint32
 }
 
 func NewMap[K comparable, V any](size int, hash func(K) uint64) *Map[K, V] {
@@ -41,7 +41,18 @@ func (m *Map[K, V]) Len() int {
 	return int(m.count)
 }
 
-// Clear clears all keys in the map, where already allocated memory will be reused.
+// CalcLen re-calculates the count of keys and then returns it to the caller.
+func (m *Map[K, V]) CalcLen() int {
+	m.count = 0
+	for _, el := range m.items {
+		if el.occupied {
+			m.count++
+		}
+	}
+	return int(m.count)
+}
+
+// Clear clears all keys in the map, allocated memory will be reused.
 func (m *Map[K, V]) Clear() {
 	for i := range m.items {
 		m.items[i] = hashItem[K, V]{}
@@ -178,6 +189,7 @@ func (m *Map[K, V]) Foreach(f func(K, *V) bool) {
 	}
 }
 
+// Keys returns all keys in the map as list.
 func (m *Map[K, V]) Keys() (res []K) {
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
@@ -188,6 +200,7 @@ func (m *Map[K, V]) Keys() (res []K) {
 	return
 }
 
+// Values returns all values in the map as list.
 func (m *Map[K, V]) Values() (res []V) {
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
@@ -285,18 +298,33 @@ func (m *Map[K, V]) density() float64 {
 }
 
 func (m *Map[K, V]) String() string {
+	w := "                "[:int(math.Ceil(math.Log10(float64(len(m.items)))))]
+	itoa := func(i int) string {
+		s := strconv.Itoa(i)
+		return w[:len(w)-len(s)] + s
+	}
 	p := bytes.Buffer{}
+	var maxDist uint32
 	for idx, i := range m.items {
-		p.WriteString(strconv.Itoa(idx) + ":")
+		p.WriteString(itoa(idx) + ":")
 		if !i.occupied {
-			p.WriteString("\t-\n")
+			p.WriteString(w)
+			p.WriteString(" \t-\n")
 		} else {
 			at := m.hash(i.key) % uint64(len(m.items))
 			if i.dist > 0 {
-				p.WriteString(fmt.Sprintf("^%d", at))
+				p.WriteString("^")
+				p.WriteString(itoa(int(at)))
+				if i.dist > uint32(maxDist) {
+					maxDist = i.dist
+				}
+			} else {
+				p.WriteString(w)
+				p.WriteString(" ")
 			}
 			p.WriteString("\t" + strings.Repeat(".", int(i.dist)) + fmt.Sprintf("%v\n", i.key))
 		}
 	}
+	fmt.Fprintf(&p, "max distance: %d", maxDist)
 	return p.String()
 }
