@@ -68,6 +68,13 @@ func (m *Map[K, V]) Get(k K) (v V, exists bool) {
 	return v, false
 }
 
+func (m *Map[K, V]) Ref(k K) (v *V) {
+	if idx := m.findValue(k); idx >= 0 {
+		return &m.items[idx].val
+	}
+	return nil
+}
+
 func (m *Map[K, V]) findValue(k K) int {
 	num := len(m.items)
 	if num <= 0 {
