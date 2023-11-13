@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unsafe"
 	_ "unsafe"
 )
 
@@ -19,8 +20,8 @@ type Map[K comparable, V any] struct {
 
 // hashItem represents a slot in the map.
 type hashItem[K, V any] struct {
-	key      K
-	val      V
+	Key      K
+	Value    V
 	occupied bool
 	dist     uint32
 }
@@ -63,14 +64,14 @@ func (m *Map[K, V]) Clear() {
 // Get retrieves the value by 'k', returns false as the second argument if not found.
 func (m *Map[K, V]) Get(k K) (v V, exists bool) {
 	if idx := m.findValue(k); idx >= 0 {
-		return m.items[idx].val, true
+		return m.items[idx].Value, true
 	}
 	return v, false
 }
 
 func (m *Map[K, V]) Ref(k K) (v *V) {
 	if idx := m.findValue(k); idx >= 0 {
-		return &m.items[idx].val
+		return &m.items[idx].Value
 	}
 	return nil
 }
@@ -89,7 +90,7 @@ func (m *Map[K, V]) findValue(k K) int {
 			return -1
 		}
 
-		if e.key == k {
+		if e.Key == k {
 			return idx
 		}
 
@@ -113,7 +114,7 @@ func (m *Map[K, V]) Set(k K, v V) (prev V) {
 	if int(m.count) >= len(m.items)*3/4 {
 		m.resizeHash(len(m.items) * 2)
 	}
-	return m.setHash(hashItem[K, V]{key: k, val: v, occupied: true})
+	return m.setHash(hashItem[K, V]{Key: k, Value: v, occupied: true})
 }
 
 // Delete deletes a key from the map, returns deleted value if existed
@@ -122,7 +123,7 @@ func (m *Map[K, V]) Delete(k K) (prev V, ok bool) {
 	if idx < 0 {
 		return prev, false
 	}
-	prev = m.items[idx].val
+	prev = m.items[idx].Value
 
 	// Shift the following keys forward
 	num := len(m.items)
@@ -148,7 +149,7 @@ NEXT:
 
 func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V) {
 	num := len(m.items)
-	idx := int(m.hash(incoming.key) % uint64(num))
+	idx := int(m.hash(incoming.Key) % uint64(num))
 
 	for idxStart := idx; ; {
 		e := &m.items[idx]
@@ -159,9 +160,9 @@ func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V) {
 			return
 		}
 
-		if e.key == incoming.key {
-			prev = e.val
-			e.val, e.dist = incoming.val, incoming.dist
+		if e.Key == incoming.Key {
+			prev = e.Value
+			e.Value, e.dist = incoming.Value, incoming.dist
 			return prev
 		}
 
@@ -189,7 +190,7 @@ func (m *Map[K, V]) Foreach(f func(K, *V) bool) {
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
 		if ip.occupied {
-			if !f(ip.key, &ip.val) {
+			if !f(ip.Key, &ip.Value) {
 				return
 			}
 		}
@@ -201,7 +202,7 @@ func (m *Map[K, V]) Keys() (res []K) {
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
 		if ip.occupied {
-			res = append(res, ip.key)
+			res = append(res, ip.Key)
 		}
 	}
 	return
@@ -212,7 +213,7 @@ func (m *Map[K, V]) Values() (res []V) {
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
 		if ip.occupied {
-			res = append(res, ip.val)
+			res = append(res, ip.Value)
 		}
 	}
 	return
@@ -227,22 +228,28 @@ func (m *Map[K, V]) nextItem(idx int) (int, *hashItem[K, V]) {
 	return 0, nil
 }
 
-func (m *Map[K, V]) First() (nextk K, nextv V, ok bool) {
-	if _, p := m.nextItem(0); p != nil {
-		return p.key, p.val, true
-	}
-	return nextk, nextv, false
-}
-
-// Next finds the next key after 'k', returns nil if not found.
-func (m *Map[K, V]) Next(k K) (nextk K, nextv V, ok bool) {
-	idx := m.findValue(k)
-	if idx >= 0 {
-		if _, p := m.nextItem(idx + 1); p != nil {
-			return p.key, p.val, true
+func (m *Map[K, V]) First() *hashItem[K, V] {
+	for i := range m.items {
+		if m.items[i].occupied {
+			return &m.items[i]
 		}
 	}
-	return nextk, nextv, false
+	return nil
+}
+
+func (m *Map[K, V]) Next(el *hashItem[K, V]) *hashItem[K, V] {
+	if len(m.items) == 0 {
+		return nil
+	}
+	hashItemSize := unsafe.Sizeof(hashItem[K, V]{})
+	for el != &m.items[len(m.items)-1] {
+		ptr := uintptr(unsafe.Pointer(el)) + hashItemSize
+		el = (*hashItem[K, V])(unsafe.Pointer(ptr))
+		if el.occupied {
+			return el
+		}
+	}
+	return nil
 }
 
 func (m *Map[K, V]) Copy() *Map[K, V] {
@@ -318,7 +325,7 @@ func (m *Map[K, V]) String() string {
 			p.WriteString(w)
 			p.WriteString(" \t-\n")
 		} else {
-			at := m.hash(i.key) % uint64(len(m.items))
+			at := m.hash(i.Key) % uint64(len(m.items))
 			if i.dist > 0 {
 				p.WriteString("^")
 				p.WriteString(itoa(int(at)))
@@ -329,7 +336,7 @@ func (m *Map[K, V]) String() string {
 				p.WriteString(w)
 				p.WriteString(" ")
 			}
-			p.WriteString("\t" + strings.Repeat(".", int(i.dist)) + fmt.Sprintf("%v\n", i.key))
+			p.WriteString("\t" + strings.Repeat(".", int(i.dist)) + fmt.Sprintf("%v\n", i.Key))
 		}
 	}
 	fmt.Fprintf(&p, "max distance: %d", maxDist)

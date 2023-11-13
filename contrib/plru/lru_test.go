@@ -139,3 +139,40 @@ func BenchmarkRHMapAdd(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkRHMapFirstNext(b *testing.B) {
+	b.StopTimer()
+	m := NewMap[int, int](8, Hash.Int)
+	for i := 0; i < 100; i++ {
+		m.Set(i, i+1)
+	}
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		c := 0
+		for iter := m.First(); iter != nil; iter = m.Next(iter) {
+			c++
+		}
+		if c != m.Len() {
+			b.Fail()
+		}
+	}
+}
+
+func BenchmarkRHMapForeach(b *testing.B) {
+	b.StopTimer()
+	m := NewMap[int, int](8, Hash.Int)
+	for i := 0; i < 100; i++ {
+		m.Set(i, i+1)
+	}
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		c := 0
+		m.Foreach(func(k int, v *int) bool {
+			c++
+			return true
+		})
+		if c != m.Len() {
+			b.Fail()
+		}
+	}
+}

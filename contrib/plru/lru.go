@@ -85,8 +85,8 @@ func (m *Cache[K, V]) Add(key K, value V) {
 		if e == nil {
 			m.ptr, e = m.store.nextItem(0)
 		}
-		if e.val.Time < v0.Time {
-			k0, v0 = e.key, e.val
+		if e.Value.Time < v0.Time {
+			k0, v0 = e.Key, e.Value
 		}
 		m.ptr = (m.ptr + 1) % len(m.store.items)
 	}
