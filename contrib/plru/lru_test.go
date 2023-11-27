@@ -9,6 +9,10 @@ import (
 	_ "unsafe"
 )
 
+func init() {
+	rand.Seed(time.Now().Unix())
+}
+
 func TestPLRU(t *testing.T) {
 	N := 10000
 	c := New[int, int](N, Hash.Int, nil)
@@ -35,7 +39,22 @@ func TestRHMapFixedFull(t *testing.T) {
 		m.Set(i, i+1)
 	}
 	fmt.Println(time.Since(start))
-	fmt.Println(m)
+	// fmt.Println(m)
+}
+
+func TestRHMapInt64a(t *testing.T) {
+	const N = 1e2
+	m := NewMap[int64, int](N, Hash.Int64a)
+
+	for i := 0; i < N*2; i++ {
+		if rand.Intn(10) > 0 {
+			m.Set(rand.Int63(), i+1)
+		} else {
+			m.Set(int64(i), i+1)
+		}
+	}
+
+	fmt.Println(m.GoString())
 }
 
 func TestRHMap(t *testing.T) {
@@ -58,7 +77,7 @@ func TestRHMap(t *testing.T) {
 	}
 
 	for k, v := range m2 {
-		v2, _ := m.Get(k)
+		v2, _ := m.Find(k)
 		if v2 != v {
 			t.Fatal(k)
 		}
@@ -70,7 +89,7 @@ func TestRHMap(t *testing.T) {
 
 const BN = 1e6
 
-func BenchmarkGoMap(b *testing.B) {
+func BenchmarkGoMapRandomGet(b *testing.B) {
 	b.StopTimer()
 	m2 := map[int]int{}
 
@@ -80,14 +99,14 @@ func BenchmarkGoMap(b *testing.B) {
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
-		x := rand.Intn(BN)
-		if m2[x] == 0 {
+		x := rand.Intn(BN * 2)
+		if m2[x] == -1 {
 			b.Fatal(i)
 		}
 	}
 }
 
-func BenchmarkRHMap(b *testing.B) {
+func BenchmarkRHMapRandomGet(b *testing.B) {
 	b.StopTimer()
 	m := NewMap[int, int](BN, Hash.Int)
 
@@ -97,8 +116,25 @@ func BenchmarkRHMap(b *testing.B) {
 	b.StartTimer()
 
 	for i := 0; i < b.N; i++ {
-		x := rand.Intn(BN)
-		if v, _ := m.Get(x); v == 0 {
+		x := rand.Intn(BN * 2)
+		if v, _ := m.Find(x); v == -1 {
+			b.Fatal(i)
+		}
+	}
+}
+
+func BenchmarkRHMapInt64aRandomGet(b *testing.B) {
+	b.StopTimer()
+	m := NewMap[int64, int](BN, Hash.Int64a)
+
+	for i := 0; i < BN; i++ {
+		m.Set(int64(i), i+1)
+	}
+	b.StartTimer()
+
+	for i := 0; i < b.N; i++ {
+		x := rand.Int63n(BN * 2)
+		if v, _ := m.Find(x); v == -1 {
 			b.Fatal(i)
 		}
 	}
@@ -172,6 +208,24 @@ func BenchmarkRHMapForeach(b *testing.B) {
 			return true
 		})
 		if c != m.Len() {
+			b.Fail()
+		}
+	}
+}
+
+func BenchmarkGoMapForeach(b *testing.B) {
+	b.StopTimer()
+	m := map[int]int{}
+	for i := 0; i < 100; i++ {
+		m[i] = i + 1
+	}
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		c := 0
+		for range m {
+			c++
+		}
+		if c != len(m) {
 			b.Fail()
 		}
 	}

@@ -20,10 +20,10 @@ type Map[K comparable, V any] struct {
 
 // hashItem represents a slot in the map.
 type hashItem[K, V any] struct {
+	dist     uint32
+	occupied bool
 	Key      K
 	Value    V
-	occupied bool
-	dist     uint32
 }
 
 func NewMap[K comparable, V any](size int, hash func(K) uint64) *Map[K, V] {
@@ -32,24 +32,15 @@ func NewMap[K comparable, V any](size int, hash func(K) uint64) *Map[K, V] {
 	return obj
 }
 
-// Cap returns the capacity of the map, keys more than Cap() will trigger the resizing.
+// Cap returns the capacity of the map.
+// Cap * 0.75 is the expanding threshold for non-fixed map.
+// Fixed map panic when keys exceed the capacity.
 func (m *Map[K, V]) Cap() int {
 	return len(m.items)
 }
 
 // Len returns the count of keys in the map.
 func (m *Map[K, V]) Len() int {
-	return int(m.count)
-}
-
-// CalcLen re-calculates the count of keys and then returns it to the caller.
-func (m *Map[K, V]) CalcLen() int {
-	m.count = 0
-	for _, el := range m.items {
-		if el.occupied {
-			m.count++
-		}
-	}
 	return int(m.count)
 }
 
@@ -61,14 +52,24 @@ func (m *Map[K, V]) Clear() {
 	m.count = 0
 }
 
-// Get retrieves the value by 'k', returns false as the second argument if not found.
-func (m *Map[K, V]) Get(k K) (v V, exists bool) {
+// Find finds the value by 'k', returns false as the second argument if not found.
+func (m *Map[K, V]) Find(k K) (v V, exists bool) {
 	if idx := m.findValue(k); idx >= 0 {
 		return m.items[idx].Value, true
 	}
 	return v, false
 }
 
+// Get gets the value by 'k'.
+func (m *Map[K, V]) Get(k K) (v V) {
+	if idx := m.findValue(k); idx >= 0 {
+		return m.items[idx].Value
+	}
+	return v
+}
+
+// Ref retrieves the value pointer by 'k', it is legal to alter what it points to
+// as long as the map stays unchanged.
 func (m *Map[K, V]) Ref(k K) (v *V) {
 	if idx := m.findValue(k); idx >= 0 {
 		return &m.items[idx].Value
@@ -106,8 +107,8 @@ func (m *Map[K, V]) Contains(k K) bool {
 	return m.findValue(k) >= 0
 }
 
-// Set upserts a key-value pair in the map. Nil key is not allowed.
-func (m *Map[K, V]) Set(k K, v V) (prev V) {
+// Set upserts a key-value pair in the map and returns the previous value if updated.
+func (m *Map[K, V]) Set(k K, v V) (prev V, updated bool) {
 	if len(m.items) <= 0 {
 		m.items = make([]hashItem[K, V], 8)
 	}
@@ -117,7 +118,7 @@ func (m *Map[K, V]) Set(k K, v V) (prev V) {
 	return m.setHash(hashItem[K, V]{Key: k, Value: v, occupied: true})
 }
 
-// Delete deletes a key from the map, returns deleted value if existed
+// Delete deletes a key from the map, returns deleted value if existed.
 func (m *Map[K, V]) Delete(k K) (prev V, ok bool) {
 	idx := m.findValue(k)
 	if idx < 0 {
@@ -147,7 +148,7 @@ NEXT:
 	return prev, true
 }
 
-func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V) {
+func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V, updated bool) {
 	num := len(m.items)
 	idx := int(m.hash(incoming.Key) % uint64(num))
 
@@ -163,7 +164,7 @@ func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V) {
 		if e.Key == incoming.Key {
 			prev = e.Value
 			e.Value, e.dist = incoming.Value, incoming.dist
-			return prev
+			return prev, true
 		}
 
 		// Swap if the incoming item is further from its best idx.
@@ -176,7 +177,7 @@ func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V) {
 
 		if idx == idxStart {
 			if m.Fixed {
-				panic("map is full")
+				panic("fixed map is full")
 			} else {
 				panic("fatal: space not enough")
 			}

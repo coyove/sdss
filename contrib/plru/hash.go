@@ -12,12 +12,14 @@ var Hash = struct {
 	Str    func(v string) uint64
 	Int    func(v int) uint64
 	Int64  func(v int64) uint64
+	Int64a func(v int64) uint64
 	Uint32 func(v uint32) uint64
 	Uint64 func(v uint64) uint64
 }{
 	func(v string) uint64 { return uint64(stringHash(v, 0)) },
 	func(v int) uint64 { return uint64(int64Hash(uint64(v), 0)) },
 	func(v int64) uint64 { return uint64(int64Hash(uint64(v), 0)) },
+	func(v int64) uint64 { return uint64(v) },
 	func(v uint32) uint64 { return uint64(int64Hash(uint64(v), 0)) },
 	func(v uint64) uint64 { return uint64(int64Hash(uint64(v), 0)) },
 }

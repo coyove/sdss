@@ -50,7 +50,7 @@ func (m *Cache[K, V]) Cap() int {
 
 func (m *Cache[K, V]) Update(key K, f func(V) V) {
 	m.mu.Lock()
-	old, ok := m.store.Get(key)
+	old, ok := m.store.Find(key)
 	if ok {
 		old.Value = f(old.Value)
 		old.Time = future.UnixNano()
@@ -97,7 +97,7 @@ func (m *Cache[K, V]) Add(key K, value V) {
 func (m *Cache[K, V]) Get(k K) (V, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	v, ok := m.store.Get(k)
+	v, ok := m.store.Find(k)
 	if ok {
 		v.Time = future.UnixNano()
 		m.store.Set(k, v)
