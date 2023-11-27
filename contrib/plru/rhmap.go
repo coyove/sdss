@@ -312,6 +312,22 @@ func (m *Map[K, V]) density() float64 {
 }
 
 func (m *Map[K, V]) String() string {
+	p, f := bytes.NewBufferString("{"), false
+	for _, i := range m.items {
+		if !i.occupied {
+			continue
+		}
+		fmt.Fprintf(p, "%v: %v, ", i.Key, i.Value)
+		f = true
+	}
+	if f {
+		p.Truncate(p.Len() - 2)
+	}
+	p.WriteString("}")
+	return p.String()
+}
+
+func (m *Map[K, V]) GoString() string {
 	w := "                "[:int(math.Ceil(math.Log10(float64(len(m.items)))))]
 	itoa := func(i int) string {
 		s := strconv.Itoa(i)
