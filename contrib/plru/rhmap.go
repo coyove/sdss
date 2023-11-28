@@ -27,6 +27,9 @@ type hashItem[K, V any] struct {
 }
 
 func NewMap[K comparable, V any](size int, hash func(K) uint64) *Map[K, V] {
+	if size < 1 {
+		size = 1
+	}
 	obj := &Map[K, V]{hash: hash}
 	obj.items = make([]hashItem[K, V], size*2)
 	return obj
@@ -36,11 +39,17 @@ func NewMap[K comparable, V any](size int, hash func(K) uint64) *Map[K, V] {
 // Cap * 0.75 is the expanding threshold for non-fixed map.
 // Fixed map panic when keys exceed the capacity.
 func (m *Map[K, V]) Cap() int {
+	if m == nil {
+		return 0
+	}
 	return len(m.items)
 }
 
 // Len returns the count of keys in the map.
 func (m *Map[K, V]) Len() int {
+	if m == nil {
+		return 0
+	}
 	return int(m.count)
 }
 
@@ -54,6 +63,9 @@ func (m *Map[K, V]) Clear() {
 
 // Find finds the value by 'k', returns false as the second argument if not found.
 func (m *Map[K, V]) Find(k K) (v V, exists bool) {
+	if m == nil {
+		return
+	}
 	if idx := m.findValue(k); idx >= 0 {
 		return m.items[idx].Value, true
 	}
@@ -62,6 +74,9 @@ func (m *Map[K, V]) Find(k K) (v V, exists bool) {
 
 // Get gets the value by 'k'.
 func (m *Map[K, V]) Get(k K) (v V) {
+	if m == nil {
+		return
+	}
 	if idx := m.findValue(k); idx >= 0 {
 		return m.items[idx].Value
 	}
@@ -71,6 +86,9 @@ func (m *Map[K, V]) Get(k K) (v V) {
 // Ref retrieves the value pointer by 'k', it is legal to alter what it points to
 // as long as the map stays unchanged.
 func (m *Map[K, V]) Ref(k K) (v *V) {
+	if m == nil {
+		return nil
+	}
 	if idx := m.findValue(k); idx >= 0 {
 		return &m.items[idx].Value
 	}
@@ -104,6 +122,9 @@ func (m *Map[K, V]) findValue(k K) int {
 
 // Contains returns true if the map contains 'k'.
 func (m *Map[K, V]) Contains(k K) bool {
+	if m == nil {
+		return false
+	}
 	return m.findValue(k) >= 0
 }
 
@@ -188,6 +209,9 @@ func (m *Map[K, V]) setHash(incoming hashItem[K, V]) (prev V, updated bool) {
 // Foreach iterates all keys in the map, for each of them, 'f(key, &value)' will be
 // called. Values are passed by pointers and it is legal to manipulate them directly in 'f'.
 func (m *Map[K, V]) Foreach(f func(K, *V) bool) {
+	if m == nil {
+		return
+	}
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
 		if ip.occupied {
@@ -200,6 +224,9 @@ func (m *Map[K, V]) Foreach(f func(K, *V) bool) {
 
 // Keys returns all keys in the map as list.
 func (m *Map[K, V]) Keys() (res []K) {
+	if m == nil {
+		return
+	}
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
 		if ip.occupied {
@@ -211,6 +238,9 @@ func (m *Map[K, V]) Keys() (res []K) {
 
 // Values returns all values in the map as list.
 func (m *Map[K, V]) Values() (res []V) {
+	if m == nil {
+		return
+	}
 	for i := 0; i < len(m.items); i++ {
 		ip := &m.items[i]
 		if ip.occupied {
@@ -230,6 +260,9 @@ func (m *Map[K, V]) nextItem(idx int) (int, *hashItem[K, V]) {
 }
 
 func (m *Map[K, V]) First() *hashItem[K, V] {
+	if m == nil {
+		return nil
+	}
 	for i := range m.items {
 		if m.items[i].occupied {
 			return &m.items[i]
