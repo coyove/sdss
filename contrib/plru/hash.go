@@ -1,5 +1,7 @@
 package plru
 
+import _ "unsafe"
+
 //go:linkname stringHash runtime.stringHash
 func stringHash(s string, seed uintptr) uintptr
 
@@ -21,5 +23,3 @@ var Hash = struct {
 	func(v uint32) uint64 { return uint64(int64Hash(uint64(v), 0)) },
 	func(v uint64) uint64 { return uint64(int64Hash(uint64(v), 0)) },
 }
-
-type Str string

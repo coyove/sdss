@@ -346,6 +346,9 @@ func (m *Map[K, V]) density() float64 {
 }
 
 func (m *Map[K, V]) String() string {
+	if m == nil {
+		return "{}"
+	}
 	p, f := bytes.NewBufferString("{"), false
 	for _, i := range m.items {
 		if !i.occupied {
@@ -362,6 +365,9 @@ func (m *Map[K, V]) String() string {
 }
 
 func (m *Map[K, V]) GoString() string {
+	if m == nil {
+		return "{}"
+	}
 	w := "                "[:int(math.Ceil(math.Log10(float64(len(m.items)))))]
 	itoa := func(i int) string {
 		s := strconv.Itoa(i)
